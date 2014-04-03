@@ -110,7 +110,7 @@ class OdeModel(ModelABC):
                 # l_idx is the index of a parameter in the local Jacobian
                 # p_name is the name of the parameter
                 # g_idx is the index of a parameter in the global Jacobian
-                var_jacobian[:, g_idx] = local_sens[:, l_idx]
+                var_jacobian[:, g_idx] += local_sens[:, l_idx]
             jacobian[measurement] = var_jacobian * OdeModel.inner_model_param_transform_derivative(global_param_vector)
 
         return jacobian
