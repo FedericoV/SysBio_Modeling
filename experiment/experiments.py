@@ -1,20 +1,33 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Aug  7 11:57:47 2013
-
-@author: Federico Vaggi (vaggi.federico@gmail.com)
-"""
 from collections import OrderedDict
+
 import numpy as np
 
 
 class Experiment(object):
     def __init__(self, name, exp_data, fixed_parameters=None,
                  experiment_settings=None):
-        """
-        Constructs an experiment.
-        """
 
+        """
+        Creates an Experiment.  This is the basic data structure to describe measurements and experimental
+        conditions.
+
+        Currently only supports time-course based measurements.
+
+        :rtype : Experiment
+        :param string name: The name of the experiment
+        :param dict exp_data: A dictionary, containing measurement(s) for multiple species
+            Example:
+                exp_data['Species_1'] = {'value': 0, 1, 2, 'timepoints': 0, 5, 10}
+        :param dict fixed_parameters: A dictionary of parameter_name, value pairs which contains parameters which are
+            fixed in a particular experiment
+            Example:
+                fixed_params = {'kon': 0.05, 'koff': 0.013}
+        :param dict experiment_settings:  A dictionary of settings upon which parameters that are optimized
+            can vary.  Parameter dependency upon settings is specified in a separate file, allowing us to use the same
+            model and experiments, but only vary the dependencies.
+            Example:
+                param_settings = {'decay_rate': 'high'}
+        """
         self.name = name
         self.fixed_parameters = fixed_parameters
         self.settings = {}
@@ -47,6 +60,12 @@ class Experiment(object):
         self.param_global_vector_idx = None
 
     def drop_timepoint_zero(self):
+        """
+        Removes all measurements occurring at timepoint zero.
+
+        This is useful because often we don't wish to fit the t0 of our model since
+        it does not depend on the parameters.
+        """
         for measurement in self.measurements:
             timepoints = self.measurements[measurement]['timepoints']
             values = self.measurements[measurement]['value']
@@ -61,6 +80,12 @@ class Experiment(object):
             self.measurements[measurement]['std_dev'] = std_dev
 
     def get_unique_timepoints(self, include_zero_timepoints=False):
+        """
+
+        :rtype : np.array
+        :param bool include_zero_timepoints: Whether to return the zero timepoint measurements.
+        :return: Returns all unique timepoints across all measurements in the experiment.
+        """
         all_timepoints = []
         for measurement in self.measurements:
             exp_timepoints = self.measurements[measurement]['timepoints']

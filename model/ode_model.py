@@ -1,7 +1,9 @@
+from collections import OrderedDict
+
 import numpy as np
 import numba
 from scipy.integrate import odeint
-from collections import OrderedDict
+
 from abstract_model import ModelABC
 
 
@@ -9,6 +11,20 @@ class OdeModel(ModelABC):
 
     def __init__(self, model, sens_model, n_vars, param_order,
                  use_jit=True):
+        """
+
+        :param model: callable function that computes the time derivative at t with parameters p.  Due to optional
+            usage with numba, func signature is slightly different from that used by default by scipy.odeint
+        :type model: callable(y, t, yout, p)
+        :param sens_model: callable function that computes the time derivative at t with parameters p as well
+            as all the sensitivity equations.  Can be generated from :model using functions from symbolic tool module.
+            Note, y and yout are of size n_vars + (n_vars * n_params)
+        :type sens_model: callable(y, t, yout, p)
+        :param int n_vars: the number of state variables in the model
+        :param param_order: the order in which the parameters appear in the model
+        :type param_order: list or iterable with stable iterable order
+        :param bool use_jit: whether to use numba to compile the callable functions to byte code
+        """
         if use_jit:
             model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
             sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(sens_model)
@@ -23,14 +39,20 @@ class OdeModel(ModelABC):
 
     @staticmethod
     def param_transform(global_param_vector):
+        """
+        :rtype:  np.array
+        :param np.array global_param_vector: Input vector of parameters
+        :return: Parameter vector after undergoing an exponential transform.  Mostly easier to work in logspace
+        """
         exp_param_vector = np.exp(global_param_vector)
         return exp_param_vector
 
     @staticmethod
     def param_transform_derivative(global_param_vector):
         """
-        :param global_param_vector: np.array
-        :rtype : np.array
+        :rtype:  np.array
+        :param np.array global_param_vector: Input vector of parameters
+        :return: Parameter vector after undergoing an exponential transform.  Mostly easier to work in logspace
         """
         return np.exp(global_param_vector)
 
@@ -41,10 +63,9 @@ class OdeModel(ModelABC):
         at the timepoints of the measurements.
 
         :rtype : np.array
-        :param global_param_vector: np.array
-        :param experiment: Experiment()
-        :param variable_idx: dict()
-        :type experiment: object
+        :param np.array global_param_vector:
+        :param experiment.Experiment experiment:
+        :param dict variable_idx:
         """
         init_conditions = np.zeros((self._n_vars,))
         t_end = experiment.get_unique_timepoints()[-1]
