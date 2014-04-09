@@ -70,9 +70,10 @@ class SimpleProject(object):
         # Experiments with the same setting should have the same index value for
         # the parameter.
 
-        global_pars = self.model_parameter_settings.get('Global', {})
+        global_pars = self.model_parameter_settings.get('Global', [])
         fully_local_pars = self.model_parameter_settings.get('Local', {})
         shared_pars = self.model_parameter_settings.get('Shared', {})
+        fixed_pars = self.model_parameter_settings.get('Fixed', [])
 
         global_param_idx = {}
         n_params = 0
@@ -117,6 +118,9 @@ class SimpleProject(object):
                 global_param_idx['%s_%s' % (p, exp.name)]['Local'] = n_params
                 exp_param_idx[p] = n_params
                 n_params += 1
+
+            for p in fixed_pars:
+                assert(p in exp.fixed_parameters)
 
             self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
         return global_param_idx, n_params

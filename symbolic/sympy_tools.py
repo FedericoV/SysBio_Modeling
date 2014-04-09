@@ -44,68 +44,57 @@ def parse_model_file(model_fh):
 
         parsed_model_dict[category] = symbols_dict
 
-    bound_start_idx = model_text.find("#*! Bound Arguments Start")
-    bound_end_idx = model_text.find("#*! Bound Arguments End")
-    bound_args = model_text[bound_start_idx:bound_end_idx].split("\n")
-    parsed_model_dict["Bound Arguments"] = bound_args
     return parsed_model_dict
 
 
-def write_model(variables, diff_eqns, bound_args, output_fh, sens_eqns=None,
-                model_name="sensitivity_model"):
+def write_jit_model(variables, diff_eqns, params, output_fh,
+                    sens_eqns=None):
     lines = []
     pad = "    "
-    dpad = pad + pad
-
-    lines.append("def make_bound_model(*args):")
-
-    for line in bound_args:
-        lines.append(line)
-    lines.append("\n")
-
-    lines.append(pad + "def %s(y, t):" % model_name)
+    if sens_eqns is None:
+        lines.append("def model(y, t, yout, p):")
+    else:
+        lines.append("def sens_model(y, t, yout, p):")
 
     lines.append("\n")
-    lines.append(dpad + "#---------------------------------------------------------#")
-    lines.append(dpad + "#Variables#")
-    lines.append(dpad + "#---------------------------------------------------------#\n")
+    lines.append(pad + "#---------------------------------------------------------#")
+    lines.append(pad + "#Parameters#")
+    lines.append(pad + "#---------------------------------------------------------#\n")
+    for idx, var in enumerate(params):
+        lines.append(pad + "%s = p[%d]" % (var, idx))
+
+    lines.append("\n")
+    lines.append(pad + "#---------------------------------------------------------#")
+    lines.append(pad + "#Variables#")
+    lines.append(pad + "#---------------------------------------------------------#\n")
     for idx, var in enumerate(variables):
-        lines.append(dpad + "%s = y[%d]" % (var, idx))
+        lines.append(pad + "%s = y[%d]" % (var, idx))
 
     if sens_eqns is not None:
         lines.append("\n")
-        lines.append(dpad + "#---------------------------------------------------------#")
-        lines.append(dpad + "#sensitivity Variables#")
-        lines.append(dpad + "#---------------------------------------------------------#\n")
+        lines.append(pad + "#---------------------------------------------------------#")
+        lines.append(pad + "#sensitivity Variables#")
+        lines.append(pad + "#---------------------------------------------------------#\n")
         total_vars = len(variables)
         for idx, var in enumerate(sens_eqns.keys()):
-            lines.append(dpad + "%s = y[%d]" % (var, idx + total_vars))
+            lines.append(pad + "%s = y[%d]" % (var, idx + total_vars))
 
     lines.append("\n")
-    lines.append(dpad + "#---------------------------------------------------------#")
-    lines.append(dpad + "#Differential Equations#")
-    lines.append(dpad + "#---------------------------------------------------------#\n")
+    lines.append(pad + "#---------------------------------------------------------#")
+    lines.append(pad + "#Differential Equations#")
+    lines.append(pad + "#---------------------------------------------------------#\n")
 
-    return_vars = []
-    for var, eqn in diff_eqns.items():
-        lines.append(dpad + "d%s = (%s)" % (var, eqn))
-        return_vars.append("d%s" % var)
+    for idx, eqn in enumerate(diff_eqns.values()):
+        lines.append(pad + "yout[%d] = (%s)" % (idx, eqn))
 
     if sens_eqns is not None:
         lines.append("\n")
-        lines.append(dpad + "#---------------------------------------------------------#")
-        lines.append(dpad + "#sensitivity Equations#")
-        lines.append(dpad + "#---------------------------------------------------------#\n")
+        lines.append(pad + "#---------------------------------------------------------#")
+        lines.append(pad + "#sensitivity Equations#")
+        lines.append(pad + "#---------------------------------------------------------#\n")
 
-        for var, eqn in sens_eqns.items():
-            lines.append(dpad + "d_%s = (%s)" % (var, eqn))
-            return_vars.append("d_%s" % var)
-
-    lines.append("\n")
-    lines.append(dpad + "return (%s)" % (", ".join(return_vars)))
-
-    lines.append("\n")
-    lines.append(pad + "return %s" % model_name)
+        for idx, eqn in enumerate(sens_eqns.values()):
+            lines.append(pad + "yout[%d] = (%s)" % (idx + total_vars, eqn))
 
     for line in lines:
         output_fh.write(line + "\n")
@@ -120,7 +109,6 @@ def write_latex_file(model_fh, output_fh, extended=True):
     rate_laws = model_dict['Rate Laws']
     cons_laws = model_dict['Conservation Laws']
     variables = model_dict['Variables']
-    bound_args = model_dict['Bound Arguments']
     parameters = model_dict['Parameters']
 
     new_param_names = {}
@@ -157,7 +145,7 @@ def write_latex_file(model_fh, output_fh, extended=True):
     output_fh.close()
 
 
-def make_sensitivity_model(model_fh, sens_model_fh=None, ordered_params=None,
+def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
                            calculate_sensitivities=True):
     if 'module' in str(type(model_fh)):
         import inspect
@@ -179,13 +167,14 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, ordered_params=None,
     rate_laws = model_dict['Rate Laws']
     cons_laws = model_dict['Conservation Laws']
     variables = model_dict['Variables']
-    bound_args = model_dict['Bound Arguments']
+    params = model_dict['Parameters']
 
-    if ordered_params is None:
-        parameters = model_dict['Parameters']
-    else:
-        parameters = ordered_params
-        model_dict['Parameters'] = ordered_params
+    if fixed_params is not None:
+        for f_p in fixed_params:
+            if f_p in params:
+                params[f_p] = 'fixed'
+            else:
+                print '%s not in model parameters' % f_p
 
     expanded_eqns = OrderedDict()
     for d_var, eqn in eqns.items():
@@ -196,7 +185,10 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, ordered_params=None,
 
         sens_eqns = OrderedDict()
         for var_i, f_i in expanded_eqns.items():
-            for par_j in parameters.keys():
+            for par_j in params.keys():
+                if params[par_j] == 'fixed':
+                    # We don't calculate sensitivity wrt fixed parameters
+                    continue
                 dsens = diff(f_i, par_j)
                 for var_k in expanded_eqns.keys():
                     sens_kj = Symbol('sens%s_%s' % (var_k, par_j))
@@ -207,7 +199,7 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, ordered_params=None,
     else:
         sens_eqns = None
 
-    write_model(variables, expanded_eqns, bound_args, sens_model_fh,
-                sens_eqns)
+    write_jit_model(variables, expanded_eqns, params, sens_model_fh,
+                    sens_eqns)
 
     return model_dict

@@ -46,11 +46,11 @@ class TestOdeModel(TestCase):
         assert (ode_model.n_vars == 1)
 
     def test_inner_model_param_transform(self):
-        out = TestOdeModel.ode_model.inner_model_param_transform(np.ones((10,)))
+        out = TestOdeModel.ode_model.param_transform(np.ones((10,)))
         assert np.alltrue(out == np.exp(np.ones((10,))))
 
     def test_inner_model_param_transform_derivative(self):
-        out = TestOdeModel.ode_model.inner_model_param_transform_derivative(np.ones((10,)))
+        out = TestOdeModel.ode_model.param_transform_derivative(np.ones((10,)))
         assert np.alltrue(out == np.exp(np.ones((10,))))
 
     def test_simulate_experiment(self):
