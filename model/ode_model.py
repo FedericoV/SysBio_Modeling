@@ -17,12 +17,12 @@ class OdeModel(ModelABC):
     n_vars = property(get_n_vars)
 
     @staticmethod
-    def inner_model_param_transform(global_param_vector):
+    def param_transform(global_param_vector):
         exp_param_vector = np.exp(global_param_vector)
         return exp_param_vector
 
     @staticmethod
-    def inner_model_param_transform_derivative(global_param_vector):
+    def param_transform_derivative(global_param_vector):
         """
         :param global_param_vector: np.array
         :rtype : np.array
@@ -43,7 +43,7 @@ class OdeModel(ModelABC):
         """
         init_conditions = np.zeros((self._n_vars,))
         t_end = experiment.get_unique_timepoints()[-1]
-        global_param_vector = OdeModel.inner_model_param_transform(global_param_vector)
+        global_param_vector = OdeModel.param_transform(global_param_vector)
 
         t_sim = np.linspace(0, t_end, 1000)
         # Note we have to begin the simulation at t-0 - but then we don't consider it.
@@ -70,30 +70,14 @@ class OdeModel(ModelABC):
             exp_sim[measure_name]['timepoints'] = exp_t
         return exp_sim
 
-    def calc_jacobian(self, global_param_vector, experiment, variable_idx):
-        """
-        Returns the jacobian of the model, evaluated at global_param_vector,
-        using the setting in experiment, for all the model variables in variable_idx.
+    def _jacobian_sim_to_dict(self, global_param_vector, jacobian_sim, t_sim, experiment, variable_idx):
 
-        Jacobian is of size:
-        """
-
-        trans_params = OdeModel.inner_model_param_transform(global_param_vector)
-        closed_model = self.sensitivity_model_factory(experiment.param_global_vector_idx,
-                                                      experiment.fixed_parameters, trans_params)
-        t_end = experiment.get_unique_timepoints()[-1]
-        t_sim = np.linspace(0, t_end, 1000)
-
+        n_vars = self._n_vars
+        y_sim_sens = jacobian_sim[:, n_vars:]
         glob_parameter_indexes = experiment.param_global_vector_idx
         n_exp_params = len(glob_parameter_indexes)
-        n_vars = self._n_vars
 
-        init_conditions = np.zeros((n_vars + n_exp_params * n_vars,))
-
-        y_sim_sens = odeint(closed_model, init_conditions, t_sim)[:, n_vars:]
-        # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
-
-        jacobian = OrderedDict()
+        jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
             v_idx = variable_idx[measurement]
             v_0 = v_idx * n_exp_params
@@ -111,6 +95,33 @@ class OdeModel(ModelABC):
                 # p_name is the name of the parameter
                 # g_idx is the index of a parameter in the global Jacobian
                 var_jacobian[:, g_idx] += local_sens[:, l_idx]
-            jacobian[measurement] = var_jacobian * OdeModel.inner_model_param_transform_derivative(global_param_vector)
+            jacobian_dict[measurement] = var_jacobian * OdeModel.param_transform_derivative(global_param_vector)
 
-        return jacobian
+        return jacobian_dict
+
+    def calc_jacobian(self, global_param_vector, experiment, variable_idx):
+        """
+        Returns the jacobian of the model, evaluated at global_param_vector,
+        using the setting in experiment, for all the model variables in variable_idx.
+
+        Jacobian is of size:
+        """
+
+        trans_params = OdeModel.param_transform(global_param_vector)
+        closed_model = self.sensitivity_model_factory(experiment.param_global_vector_idx,
+                                                      experiment.fixed_parameters, trans_params)
+        t_end = experiment.get_unique_timepoints()[-1]
+        t_sim = np.linspace(0, t_end, 1000)
+
+        glob_parameter_indexes = experiment.param_global_vector_idx
+        n_exp_params = len(glob_parameter_indexes)
+        n_vars = self._n_vars
+
+        init_conditions = np.zeros((n_vars + n_exp_params * n_vars,))
+
+        jacobian_sim = odeint(closed_model, init_conditions, t_sim)
+        # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
+
+        jacobian_dict = self._jacobian_sim_to_dict(global_param_vector, jacobian_sim, t_sim, experiment, variable_idx)
+
+        return jacobian_dict
