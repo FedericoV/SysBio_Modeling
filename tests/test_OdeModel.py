@@ -10,6 +10,8 @@ from symbolic.sympy_tools import make_sensitivity_model
 from StringIO import StringIO
 from model import ode_model
 from collections import OrderedDict
+from jittable_model import model
+from sens_jittable_model import sens_model
 
 
 class TestOdeModel(TestCase):
@@ -28,18 +30,10 @@ class TestOdeModel(TestCase):
         cls.simple_exp.param_global_vector_idx['k_synt'] = 1
         cls.variable_idx = {'Variable_1': 0}
 
-        model_file = os.path.join(os.getcwd(), 'tests', 'simple_model.py')
-        model_fh = open(model_file)
-        sens_model_string = StringIO()
-        model_dict = make_sensitivity_model(model_fh, sens_model_string)
-        ordered_params = model_dict['Parameters']
-        exec sens_model_string.getvalue()
-        # From the string, make the function, put it in scope
-
-        model_module = imp.load_source('simple_model', model_file)
-        simple_model = model_module.simple_model
-        n_vars = model_module.n_vars
-        cls.ode_model = ode_model.OdeModel(simple_model, make_bound_model, n_vars, ordered_params)
+        # Model
+        ordered_params = ['k_deg', 'k_synt']
+        n_vars = 1
+        cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
 
     def test_get_n_vars(self):
         ode_model = TestOdeModel.ode_model

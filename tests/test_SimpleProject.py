@@ -13,6 +13,9 @@ from symbolic.sympy_tools import make_sensitivity_model
 from model import ode_model
 from simple_model_settings import settings as experiment_settings
 
+from jittable_model import model
+from sens_jittable_model import sens_model
+
 
 __author__ = 'Federico Vaggi'
 
@@ -53,21 +56,13 @@ class TestSimpleProject(TestCase):
         high_deg = Experiment('High_Deg_Exp', exp_data.copy(), experiment_settings=exp_settings)
         experiments = [low_deg, high_deg]
 
-        model_file = os.path.join(os.getcwd(), 'tests', 'simple_model.py')
-        model_fh = open(model_file)
-        sens_model_string = StringIO()
-        model_dict = make_sensitivity_model(model_fh, sens_model_string)
-        ordered_parameters = model_dict['Parameters']
-        n_vars = len(model_dict['Variables'])
-        exec sens_model_string.getvalue()
-        # From the string, make the function, put it in scope
-
-        model_module = imp.load_source('simple_model', model_file)
-        simple_model = model_module.simple_model
-        cls.model = ode_model.OdeModel(simple_model, make_bound_model, n_vars, ordered_parameters)
+        # Model
+        ordered_params = ['k_deg', 'k_synt']
+        n_vars = 1
+        cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
 
         measurement_variable_map = {'Variable_1': 0}
-        proj = SimpleProject(cls.model, experiments, experiment_settings, measurement_variable_map)
+        proj = SimpleProject(cls.ode_model, experiments, experiment_settings, measurement_variable_map)
         cls.proj = proj
 
         global_param_vector = np.zeros((3,))

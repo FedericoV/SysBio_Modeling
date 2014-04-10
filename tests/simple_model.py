@@ -4,16 +4,12 @@ n_vars = 1
 
 
 def simple_model(y, t, *args):
-#*! Bound Arguments Start
-    param_idx = args[0]
-    conditions = args[1]
-    param_vector = args[2]
+    p = args[0]
 
 #*! Parameters Start
-    k_deg = param_vector[param_idx['k_deg']]
-    k_synt = param_vector[param_idx['k_synt']]
+    k_deg = p[0]
+    k_synt = p[1]
 #*! Parameters End
-#*! Bound Arguments End
 
 
 #*! Variables Start
@@ -25,6 +21,7 @@ def simple_model(y, t, *args):
     d_y = k_synt - k_deg * _y
 #*! Differential Equations End
     return d_y
+
 
 if __name__ == '__main__':
     from scipy.integrate import odeint
