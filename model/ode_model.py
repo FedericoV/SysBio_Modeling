@@ -12,6 +12,9 @@ class OdeModel(ModelABC):
     def __init__(self, model, sens_model, n_vars, param_order,
                  use_jit=True):
         """
+        OdeModel is the default and simplest class that it is in charge of simulating models of differential
+        equations.  OdeModel is also able of using sensitivity equations (currently only forward sensitivity) to
+        calculate the jacobian explicitly.
 
         :param model: callable function that computes the time derivative at t with parameters p.  Due to optional
             usage with numba, func signature is slightly different from that used by default by scipy.odeint
@@ -59,8 +62,7 @@ class OdeModel(ModelABC):
     def simulate_experiment(self, global_param_vector, experiment, variable_idx,
                             all_timepoints=False):
         """
-        Returns a list containing the experiment simulated
-        at the timepoints of the measurements.
+        Returns a list containing the experiment simulated at the timepoints of the measurements.
 
         :rtype : np.array
         :param np.array global_param_vector:
@@ -103,6 +105,21 @@ class OdeModel(ModelABC):
         return exp_sim
 
     def _jacobian_sim_to_dict(self, global_param_vector, jacobian_sim, t_sim, experiment, variable_idx):
+        """
+        This maps the jacobian with respect to model parameters to a jacobian with respect to the global parameters
+        being optimized.  Although a model might only have 20 parameters, the effective global parameters might be
+        a lot more, because a model parameter is allowed to take on different values in different experiments, if it is
+        local (unique to each experiment) or shared (fixed across multiple experiments, depending on the experiment
+        settings).  Note that it is also possible for multiple parameters within a model to refer to the same global
+        parameter, if those parameters are part of the same shared block and have the same dependencies.
+
+        :param np.array global_param_vector:
+        :param np.array jacobian_sim:
+        :param np.array t_sim:
+        :param Experiment experiment:
+        :param dict variable_idx:
+        :return: dictionary of jacobian with respect to each measurement in experiment
+        """
 
         n_vars = self._n_vars
         y_sim_sens = jacobian_sim[:, n_vars:]
@@ -138,6 +155,13 @@ class OdeModel(ModelABC):
         return jacobian_dict
 
     def global_to_experiment_params(self, global_param_vector, experiment):
+        """
+        :rtype np.array
+        :param np.array global_param_vector: The vector of all parameters that are being optimized across all
+            experiments
+        :param Experiment experiment: The experiment for which we would like to extra the specific parameters
+        :return: A vector of parameters specific to simulating that experiment
+        """
         exp_param_vector = np.zeros((len(self.param_order),))
         for p_model_idx, p_name in enumerate(self.param_order):
             try:
@@ -151,10 +175,13 @@ class OdeModel(ModelABC):
 
     def calc_jacobian(self, global_param_vector, experiment, variable_idx):
         """
-        Returns the jacobian of the model, evaluated at global_param_vector,
-        using the setting in experiment, for all the model variables in variable_idx.
-
-        Jacobian is of size:
+        :rtype dict
+        :param np.array global_param_vector: The vector of all parameters that are being optimized across all
+            experiments
+        :param Experiment experiment: The experiment which we are trying to calculate the jacobian for
+        :param dict variable_idx: The mapping from measurements in the experiment to variable index in the model
+        :return: A dictionary containing the partial derivative of the measurements in the model (mapped to model
+            variables through variable_idx) to all the non-fixed parameters in the model.
         """
 
         transformed_params = OdeModel.param_transform(global_param_vector)
@@ -175,10 +202,5 @@ class OdeModel(ModelABC):
 
         jacobian_sim = odeint(func_wrapper, init_conditions, t_sim)
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
-
         jacobian_dict = self._jacobian_sim_to_dict(global_param_vector, jacobian_sim, t_sim, experiment, variable_idx)
-
         return jacobian_dict
-
-
-
