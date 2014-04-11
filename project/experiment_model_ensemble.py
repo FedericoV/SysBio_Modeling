@@ -1,7 +1,29 @@
 from collections import OrderedDict
+
 import warnings
 
 import numpy as np
+
+########################################################################################
+# Utility Functions
+########################################################################################
+
+
+def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim):
+    sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data))
+    sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std)))
+
+
+def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
+                                  sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim):
+    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1)  # Vector
+    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1)  # Vector
+    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2))  # Scalar
+    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2))  # Scalar
+
+
+def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
+    scale_jac_out[:] = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
 
 
 class SimpleProject(object):
@@ -52,7 +74,9 @@ class SimpleProject(object):
         return m_idx
 
     def _calc_n_residuals(self, include_zero_timepoints=False):
-        """Just a counter that keeps track of the total number of residuals"""
+        """
+        Calculates the total number of experimental points across all experiments
+        """
         n_res = 0
         for experiment in self.experiments:
             for measured_var, measurement in experiment.measurements.items():
@@ -63,12 +87,18 @@ class SimpleProject(object):
         return n_res
 
     def _set_local_param_idx(self):
-        # This dict holds the index of where in the parameter vector
-        # we find the the value of a parameter for a given setting.
-        # Global parameters will be independent of experimental settings.
-        # Local parameters will be dependent on the settings of each experiment.
-        # Experiments with the same setting should have the same index value for
-        # the parameter.
+        """
+        We map the model parameters to the global parameters using the model parameter settings dictionary.
+
+        Parameters come in 3 flavors:
+
+        - Local: A parameter is local if it is allowed to take on a different value in each experiment
+        - Global: A parameter is global if it has a fixed value across all experiments
+        - Shared: Shared parameters belong to groups, and each group depends on a number of settings.  All parameters
+        in the same group will have the same value in experiments that have the same settings.
+
+        Typically, the number of global parameters will be much bigger than the number of model parameters.
+        """
 
         global_pars = self.model_parameter_settings.get('Global', [])
         fully_local_pars = self.model_parameter_settings.get('Local', {})
@@ -76,59 +106,57 @@ class SimpleProject(object):
         fixed_pars = self.model_parameter_settings.get('Fixed', [])
 
         global_param_idx = {}
+        # This dict maps the location of parameters in the global parameter vector.
+
         n_params = 0
         for p in global_pars:
             global_param_idx[p] = {}
             global_param_idx[p]['Global'] = n_params
             n_params += 1
 
-        for exp_idx, exp in enumerate(self.experiments):
-            # For each experiment, where in the full parameter vector we find
-            # the parameter we want to optimize.  Note - the position should be
-            # the same as that found in the exp_param_idx.  The full parameter
-            # vector, however, will use the global names for parameters.
-            # Look at test at bottom to clarify.
+        for exp_idx, experiment in enumerate(self.experiments):
             exp_param_idx = OrderedDict()
 
             for p in global_pars:
                 exp_param_idx[p] = global_param_idx[p]['Global']
+                # Global parameters always refer to the same index in the global parameter vector
 
             for p_group in shared_pars:
+                # Shared parameters depend on the experimental settings.
                 for p, settings in shared_pars[p_group].items():
                     settings = tuple(settings)
 
-                    # Local parameters depend on specific experimental settings.
-                    # Note that ('L', 'R') != ('R', 'L')
-                    exp_p_settings = tuple([exp.settings[setting] for
-                                            setting in settings])
+                    exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
+                    # Here we get the experimental conditions for all settings upon which that parameter depends.
 
                     if p_group not in global_param_idx:
                         global_param_idx[p_group] = {}
+                    # If it's the first time we encounter that parameter group, create it.
 
-                    # If that combination of settings is already present,
-                    # we point it to the already existing index.
                     try:
                         exp_param_idx[p] = global_param_idx[p_group][exp_p_settings]
+                        # If we already have another parameter in that parameter group and with those same
+                        # experimental settings, then they point to the same location.
                     except KeyError:
                         global_param_idx[p_group][exp_p_settings] = n_params
                         exp_param_idx[p] = n_params
                         n_params += 1
 
             for p in fully_local_pars:
-                global_param_idx['%s_%s' % (p, exp.name)]['Local'] = n_params
+                global_param_idx['%s_%s' % (p, experiment.name)]['Local'] = n_params
                 exp_param_idx[p] = n_params
                 n_params += 1
 
             for p in fixed_pars:
-                assert(p in exp.fixed_parameters)
+                assert(p in experiment.fixed_parameters)
+                # If some parameters are marked as globally fixed, each experiment must provide a value.
 
             self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
         return global_param_idx, n_params
 
     def _sim_experiments(self, exp_subset='all', all_timepoints=False):
         """
-
-        :rtype list[dict()]
+        Simulates all the experiments in the project.
         """
 
         if self.global_param_vector is None:
@@ -147,11 +175,11 @@ class SimpleProject(object):
 
     def _calc_scale_factors(self):
         """
-        Call only after _sim_experiments
+        Analytically calculates the optimal scale factor for measurements that are in arbitrary units
         """
         for measure_name, experiment_list in self.measurements_idx.items():
-            sim_dot_exp = 0.0
-            sim_dot_sim = 0.0
+            sim_dot_exp = np.zeros((1,), dtype='float64')
+            sim_dot_sim = np.zeros((1,), dtype='float64')
 
             for exp_idx in experiment_list:
                 experiment = self.experiments[exp_idx]
@@ -162,10 +190,40 @@ class SimpleProject(object):
                 exp_std = measurement['std_dev'][exp_timepoints != 0]
 
                 sim_data = self.all_sims[exp_idx][measure_name]['value']
-                sim_dot_exp += np.sum(((exp_data/exp_std**2) * sim_data))
-                sim_dot_sim += np.sum(((sim_data/exp_std) * (sim_data/exp_std)))
+                _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim)
 
             self.scale_factors[measure_name] = sim_dot_exp / sim_dot_sim
+
+    def _calc_scale_factors_jacobian(self):
+        """
+        Analytically calculates the jacobian of the scale factors for each measurement
+        """
+        n_global_pars = len(self.global_param_vector)
+        for measure_name, experiment_list in self.measurements_idx.items():
+            sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
+            sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
+            sim_dot_sim = np.zeros((1,), dtype='float64')
+            sim_dot_exp = np.zeros((1,), dtype='float64')
+
+            for exp_idx in experiment_list:
+                experiment = self.experiments[exp_idx]
+                measurement = experiment.measurements[measure_name]
+                exp_data = measurement['value']
+                exp_std = measurement['std_dev']
+
+                exp_timepoints = measurement['timepoints']
+                exp_data = exp_data[exp_timepoints != 0]  # Vector
+                exp_std = exp_std[exp_timepoints != 0]  # Vector
+
+                sim_data = self.all_sims[exp_idx][measure_name]['value']  # Vector
+                model_sens = self.model_jacobian[exp_idx][measure_name]  # Matrix
+
+                _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
+                                              sens_dot_exp_data, sens_dot_sim)
+
+            scale_jac_out = np.zeros((n_global_pars,), dtype='float64')
+            _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out)
+            self.scale_factors_jacobian[measure_name] = scale_jac_out
 
     def _calc_exp_residuals(self, exp_idx):
         """Returns the residuals between simulated data and the
@@ -190,9 +248,10 @@ class SimpleProject(object):
         return residuals
 
     def _calc_residuals(self):
-        """Only call after _sim_experiments and
-        :rtype : list[dict]
-        _calc_scale_factors"""
+        """
+        Calculates residuals between the simulations, scaled by the scaling factor and the simulations.
+        Has to be called after simulations and scaling factors are calculated
+        """
         all_residuals = []
         for exp_idx, experiment in enumerate(self.experiments):
             exp_res = self._calc_exp_residuals(exp_idx)
@@ -209,38 +268,9 @@ class SimpleProject(object):
             all_jacobians.append(exp_jacobian)
         self.model_jacobian = all_jacobians
 
-    def _calc_scale_factors_jacobian(self):
-        for measure_name, experiment_list in self.measurements_idx.items():
-            sens_dot_exp_data = 0
-            sens_dot_sim = 0
-            sim_dot_sim = 0
-            sim_dot_exp = 0
-
-            for exp_idx in experiment_list:
-                experiment = self.experiments[exp_idx]
-                measurement = experiment.measurements[measure_name]
-                exp_data = measurement['value']
-                exp_std = measurement['std_dev']
-
-                exp_timepoints = measurement['timepoints']
-                exp_data = exp_data[exp_timepoints != 0]  # Vector
-                exp_std = exp_std[exp_timepoints != 0]  # Vector
-
-                sim_data = self.all_sims[exp_idx][measure_name]['value']  # Vector
-                model_sens = self.model_jacobian[exp_idx][measure_name]  # Matrix
-
-                sens_dot_exp_data += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1)  # Vector
-
-                sens_dot_sim += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1)  # Vector
-                sim_dot_sim += np.sum((sim_data * sim_data) / (exp_std**2))  # Scalar
-                sim_dot_exp += np.sum((sim_data * exp_data) / (exp_std**2))  # Scalar
-
-        self.scale_factors_jacobian[measure_name] = (sens_dot_exp_data/sim_dot_sim -
-                                                     2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
-
     def get_total_params(self, verbose=True):
         """
-        Prints out the parameter index in a nice way
+        Prints out all the parameters combinations in the project in a fancy way
         """
         total_params = 0
         for g_param in self.global_param_idx:
@@ -259,9 +289,16 @@ class SimpleProject(object):
         return total_params
 
     def __call__(self, global_param_vector):
-        """Here we use memoization"""
+        """
+        Calculates the residuals between the simulated values (after optimal scaling) and the experimental values
+        across all experiments in the project.
+
+        :rtype np.array
+        :param np.array global_param_vector: A vector of all parameter values that aren't fixed
+        :return: A vector of residuals calculated for all measures in all experiments.
+        """
         self.reset_calcs()
-        self.global_param_vector = np.copy(np.asarray(global_param_vector))
+        self.global_param_vector = np.copy(global_param_vector)
         self._sim_experiments()
         self._calc_scale_factors()
         self._calc_residuals()
@@ -275,9 +312,29 @@ class SimpleProject(object):
         return residual_array
 
     def global_jacobian(self, global_param_vector):
+        """
+        We are minimizing:
+
+        ..math::
+            C(\theta)= 0.5*(\sum{B*Y(\theta)_{sim} - Y_{exp}})^2
+
+        Where:
+         :math: `B` are the optimal scaling factors for each measure
+         :math: `\theta` are the parameters that we are optimizing
+         :math: `Y(\theta)_{sim}` is the output of the model as a function of the parameters
+         :math: `Y_{exp}` is the experimental data
+
+        We can define :math: `Y(\theta)_{scaled} = B*Y(\theta)_{sim}`
+
+        Global jacobian is the jacobian of `Y(\theta)_{scaled}`
+
+        :rtype np.array
+        :param np.array global_param_vector: A vector of all parameter values that aren't fixed
+        :return: A vector of residuals calculated for all measures in all experiments.
+        """
 
         self.reset_calcs()
-        self.global_param_vector = np.copy(np.asarray(global_param_vector))
+        self.global_param_vector = np.copy(global_param_vector)
         self._sim_experiments()
         self._calc_scale_factors()
         self._calc_residuals()
@@ -311,9 +368,8 @@ class SimpleProject(object):
 
     def nlopt_fcn(self, global_param_vector, grad):
         if grad.size > 0:
-            grad[:] = self.flat_jacobian()[:]
+            grad[:] = self.flat_jacobian(global_param_vector)[:]
         return self.sum_square_residuals(global_param_vector)
-
 
     def load_param_dict(self, param_dict, default_value=0):
         param_vector = np.ones((self.n_global_params,)) * default_value
@@ -332,4 +388,3 @@ class SimpleProject(object):
             for exp_set, idx in self.global_param_idx[g_param].items():
                 param_dict[g_param][exp_set] = param_vector[idx]
         return param_dict
-
