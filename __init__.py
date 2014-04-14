@@ -1,1 +1,1 @@
-all = ['experiment', 'model', 'project', 'symbolic', 'tests']
+__all__ = ['experiment', 'model', 'project', 'symbolic']

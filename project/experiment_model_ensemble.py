@@ -293,7 +293,7 @@ class SimpleProject(object):
         Calculates the residuals between the simulated values (after optimal scaling) and the experimental values
         across all experiments in the project.
 
-        :rtype np.array
+        :rtype: np.array
         :param np.array global_param_vector: A vector of all parameter values that aren't fixed
         :return: A vector of residuals calculated for all measures in all experiments.
         """
@@ -315,20 +315,19 @@ class SimpleProject(object):
         """
         We are minimizing:
 
-        ..math::
-            C(\theta)= 0.5*(\sum{B*Y(\theta)_{sim} - Y_{exp}})^2
+        .. math::
+            C(\\theta)= 0.5*(\\sum{B*Y(\\theta)_{sim} - Y_{exp}})^2
 
         Where:
-         :math: `B` are the optimal scaling factors for each measure
-         :math: `\theta` are the parameters that we are optimizing
-         :math: `Y(\theta)_{sim}` is the output of the model as a function of the parameters
-         :math: `Y_{exp}` is the experimental data
+         :math:`B` are the optimal scaling factors for each measure \n
+         :math:`\\theta` are the parameters that we are optimizing \n
+         :math:`Y(\\theta)_{sim}` is the output of the model as a function of the parameters \n
+         :math:`Y_{exp}` is the experimental data \n
+        \n
+        We can define :math:`Y(\\theta)_{scaled} = B*Y(\\theta)_{sim}`\n\n
+        Global jacobian is the jacobian of :math:`Y(\\theta)_{scaled}`
 
-        We can define :math: `Y(\theta)_{scaled} = B*Y(\theta)_{sim}`
-
-        Global jacobian is the jacobian of `Y(\theta)_{scaled}`
-
-        :rtype np.array
+        :rtype: np.array
         :param np.array global_param_vector: A vector of all parameter values that aren't fixed
         :return: A vector of residuals calculated for all measures in all experiments.
         """

@@ -1,2 +1,6 @@
 # PyCharm Dir
-.idea
+.idea/
+
+# Docs
+build/
+
