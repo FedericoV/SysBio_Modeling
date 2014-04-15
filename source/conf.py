@@ -33,11 +33,11 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.ifconfig',
     'sphinx.ext.viewcode',
-    'sphinx.ext.intersphinx'
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.napoleon'
 ]
 
-intersphinx_mapping = {'numpy': ('http://docs.scipy.org/doc/numpy/', None),
-                       'scipy': ('http://docs.scipy.org/doc/', None),}
+intersphinx_mapping = {'numpy': ('http://docs.scipy.org/doc/numpy/', None)}
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

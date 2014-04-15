@@ -1,4 +1,4 @@
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import warnings
 
@@ -42,11 +42,10 @@ class SimpleProject(object):
 
         self.model_parameter_settings = model_parameter_settings
         self.measurement_variable_map = measurement_variable_map
-        self.global_param_idx, self.n_global_params = self._set_local_param_idx()
+        self.global_param_idx, self.n_global_params, self.residuals_per_param = self._set_local_param_idx()
 
         self.n_residuals = self._calc_n_residuals()
         self.measurements_idx = self._set_measurement_idx()
-
         self.all_sims = None
         self.all_residuals = None
         self.model_jacobian = None
@@ -107,6 +106,7 @@ class SimpleProject(object):
 
         global_param_idx = {}
         # This dict maps the location of parameters in the global parameter vector.
+        residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
 
         n_params = 0
         for p in global_pars:
@@ -118,7 +118,9 @@ class SimpleProject(object):
             exp_param_idx = OrderedDict()
 
             for p in global_pars:
-                exp_param_idx[p] = global_param_idx[p]['Global']
+                if p not in fixed_pars:
+                    exp_param_idx[p] = global_param_idx[p]['Global']
+                    residuals_per_param[p]['Global'] += len(experiment.get_unique_timepoints())
                 # Global parameters always refer to the same index in the global parameter vector
 
             for p_group in shared_pars:
@@ -141,18 +143,21 @@ class SimpleProject(object):
                         global_param_idx[p_group][exp_p_settings] = n_params
                         exp_param_idx[p] = n_params
                         n_params += 1
+                    residuals_per_param[p_group][exp_p_settings] += len(experiment.get_unique_timepoints())
 
             for p in fully_local_pars:
-                global_param_idx['%s_%s' % (p, experiment.name)]['Local'] = n_params
+                par_string = '%s_%s' % (p, experiment.name)
+                global_param_idx[par_string]['Local'] = n_params
                 exp_param_idx[p] = n_params
                 n_params += 1
+                residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
 
             for p in fixed_pars:
                 assert(p in experiment.fixed_parameters)
                 # If some parameters are marked as globally fixed, each experiment must provide a value.
 
             self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
-        return global_param_idx, n_params
+        return global_param_idx, n_params, residuals_per_param
 
     def _sim_experiments(self, exp_subset='all', all_timepoints=False):
         """
@@ -268,19 +273,20 @@ class SimpleProject(object):
             all_jacobians.append(exp_jacobian)
         self.model_jacobian = all_jacobians
 
-    def get_total_params(self, verbose=True):
+    def print_param_settings(self, verbose=True):
         """
         Prints out all the parameters combinations in the project in a fancy way
         """
+
         total_params = 0
-        for g_param in self.global_param_idx:
-            exp_settings = self.global_param_idx[g_param].keys()
+        for p_group in self.global_param_idx:
+            exp_settings = self.global_param_idx[p_group].keys()
             exp_settings = sorted(exp_settings)
             if verbose:
-                print '%s  total_settings: %d ' % (g_param, len(exp_settings))
+                print '%s  total_settings: %d ' % (p_group, len(exp_settings))
             for exp_set in exp_settings:
                 if verbose:
-                    print '\t' + repr(exp_set)
+                    print '%s, %d \t' % (repr(exp_set), self.residuals_per_param[p_group][exp_set])
                 total_params += 1
             if verbose:
                 print '\n***********************'
@@ -293,7 +299,7 @@ class SimpleProject(object):
         Calculates the residuals between the simulated values (after optimal scaling) and the experimental values
         across all experiments in the project.
 
-        :rtype: np.array
+        :rtype: :class:`~numpy:numpy.ndarray`
         :param np.array global_param_vector: A vector of all parameter values that aren't fixed
         :return: A vector of residuals calculated for all measures in all experiments.
         """
