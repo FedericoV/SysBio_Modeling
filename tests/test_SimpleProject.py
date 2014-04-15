@@ -1,7 +1,4 @@
 from unittest import TestCase
-import os
-from StringIO import StringIO
-import imp
 
 from nose.tools import raises
 import numpy as np
@@ -9,10 +6,8 @@ from statsmodels.tools.numdiff import approx_fprime
 
 from experiment.experiments import Experiment
 from project.experiment_model_ensemble import SimpleProject
-from symbolic.sympy_tools import make_sensitivity_model
 from model import ode_model
 from simple_model_settings import settings as experiment_settings
-
 from jittable_model import model
 from sens_jittable_model import sens_model
 
@@ -79,8 +74,8 @@ class TestSimpleProject(TestCase):
 
     def test__project_initialization(self):
         proj = TestSimpleProject.proj
-        assert (0 in proj.measurements_idx['Variable_1'])
-        assert (1 in proj.measurements_idx['Variable_1'])
+        assert (0 in proj._measurements_idx['Variable_1'])
+        assert (1 in proj._measurements_idx['Variable_1'])
         global_param_idx = proj.global_param_idx
         assert (global_param_idx['k_synt'].keys() == ['Global'])
         assert (len(global_param_idx['Group_1'].keys()) == 2)  # Two settings for k_deg
@@ -94,8 +89,8 @@ class TestSimpleProject(TestCase):
 
     def test_set_measurement_idx(self):
         proj = TestSimpleProject.proj
-        assert (0 in proj.measurements_idx['Variable_1'])
-        assert (1 in proj.measurements_idx['Variable_1'])
+        assert (0 in proj._measurements_idx['Variable_1'])
+        assert (1 in proj._measurements_idx['Variable_1'])
 
     @raises(ValueError)
     def test_null_param_vector(self):

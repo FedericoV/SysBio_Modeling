@@ -48,12 +48,14 @@ class OdeModel(ModelABC):
 
         n_vars = self._n_vars
         y_sim_sens = jacobian_sim[:, n_vars:]
-        glob_parameter_indexes = experiment.param_global_vector_idx
-        n_exp_params = len(glob_parameter_indexes)
+        # There are n_var state variables + n_vars * n_exp_params sensitivity variables.
+        n_exp_params = len(experiment.param_global_vector_idx)
 
         jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
+            transformed_params_deriv = OdeModel.param_transform_derivative(global_param_vector)
             v_idx = variable_idx[measurement]
+            # Mapping between experimental measurement and model variable
             v_0 = v_idx * n_exp_params
 
             exp_timepoints = experiment.measurements[measurement]['timepoints']
@@ -63,19 +65,17 @@ class OdeModel(ModelABC):
             local_sens = y_sim_sens[exp_t_idx, v_0:(v_0+n_exp_params)]
             var_jacobian = np.zeros((len(exp_t_idx), len(global_param_vector)))
 
-            for l_idx, p_name in enumerate(self.param_order):
-                try:
-                    g_idx = glob_parameter_indexes[p_name]
-                except KeyError:
-                    if p_name in experiment.fixed_parameters:
-                        continue
-                    else:
-                        raise KeyError('%s not in %s fixed parameters.')
-                # l_idx is the index of a parameter in the local Jacobian
+            for p_model_idx, p_name in enumerate(self.param_order):
+                # p_model_idx is the index of a parameter in the model
                 # p_name is the name of the parameter
-                # g_idx is the index of a parameter in the global Jacobian
-                var_jacobian[:, g_idx] += local_sens[:, l_idx]
-            jacobian_dict[measurement] = var_jacobian * OdeModel.param_transform_derivative(global_param_vector)
+                try:
+                    global_idx = experiment.param_global_vector_idx[p_name]
+                    # g_idx is the index of a parameter in the global vector
+                except KeyError:
+                    if p_name not in experiment.fixed_parameters:
+                        raise KeyError('%s not in %s fixed parameters.')
+                var_jacobian[:, global_idx] += local_sens[:, p_model_idx]
+            jacobian_dict[measurement] = var_jacobian * transformed_params_deriv
 
         return jacobian_dict
 
