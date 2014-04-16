@@ -1,14 +1,11 @@
 __author__ = 'federico'
 
-import os
-import imp
+
 import numpy as np
 
 from experiment.experiments import Experiment
 from unittest import TestCase
-from symbolic.sympy_tools import make_sensitivity_model
-from StringIO import StringIO
-from model import ode_model
+from model import OdeModel
 from collections import OrderedDict
 from jittable_model import model
 from sens_jittable_model import sens_model
@@ -33,7 +30,7 @@ class TestOdeModel(TestCase):
         # Model
         ordered_params = ['k_deg', 'k_synt']
         n_vars = 1
-        cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
+        cls.ode_model = OdeModel(model, sens_model, n_vars, ordered_params)
 
     def test_get_n_vars(self):
         ode_model = TestOdeModel.ode_model

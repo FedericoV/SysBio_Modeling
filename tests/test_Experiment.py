@@ -1,6 +1,6 @@
 from unittest import TestCase
 import numpy as np
-from experiment.experiments import Experiment
+from experiment import Experiment
 from nose.tools import raises
 
 __author__ = 'Federico Vaggi'

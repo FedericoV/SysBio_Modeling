@@ -26,7 +26,7 @@ def _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_do
     scale_jac_out[:] = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
 
 
-class SimpleProject(object):
+class Project(object):
     """Class to simulate experiments with a given model
 
     Attributes
@@ -243,10 +243,7 @@ class SimpleProject(object):
             self._scale_factors_jacobian[measure_name] = scale_jac_out
 
     def _calc_exp_residuals(self, exp_idx):
-        """Returns the residuals between simulated data and the
-        experimental data.
-
-        Residuals are |sim(model, param)_i - exp_data_i|
+        """Returns the residuals between simulations (after scaling) and experimental measurents.
         """
         residuals = OrderedDict()
         experiment = self.experiments[exp_idx]
@@ -309,11 +306,17 @@ class SimpleProject(object):
     def __call__(self, global_param_vector):
         """
         Calculates the residuals between the simulated values (after optimal scaling) and the experimental values
-        across all experiments in the project.
+        across all experiments in the project.  Note about order.
 
-        :rtype: :class:`~numpy:numpy.ndarray`
-        :param np.array global_param_vector: A vector of all parameter values that aren't fixed
-        :return: A vector of residuals calculated for all measures in all experiments.
+        Parameters
+        ----------
+        global_param_vector: :class:`~numpy:numpy.ndarray`
+            An (n,) dimensional array containing the parameters being optimized in the project
+
+        Returns
+        -------
+        residual_array: :class:`~numpy:numpy.ndarray`
+            An (m,) dimensional array where m is the number of residuals
         """
         self.reset_calcs()
         self.global_param_vector = np.copy(global_param_vector)
@@ -331,10 +334,10 @@ class SimpleProject(object):
 
     def global_jacobian(self, global_param_vector):
         """
-        We are minimizing:
+        Given a cost function:
 
         .. math::
-            C(\\theta)= 0.5*(\\sum{B*Y(\\theta)_{sim} - Y_{exp}})^2
+            C(\\theta)= 0.5*(\\sum{BY(\\theta)_{sim} - Y_{exp}})^2
 
         Where:
          :math:`B` are the optimal scaling factors for each measure \n
@@ -342,18 +345,21 @@ class SimpleProject(object):
          :math:`Y(\\theta)_{sim}` is the output of the model as a function of the parameters \n
          :math:`Y_{exp}` is the experimental data \n
 
-        \\frac{\\partial {BY_{sim}}}{\\partial \\theta}
+        The global jacobian is:
 
+        .. math::
+            &= \\frac{\\partial BY_{sim}}{\\partial \\theta} \\
+            &= B\\frac{\\partial Y_{sim}}{\\partial \\theta} + Y_{sim}\\frac{\\partial B}{\\partial \\theta}
 
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
         -------
         global_jacobian: :class:`~numpy:numpy.ndarray`
-            An (n, m) array where n is the number of residuals and m is the number of global parameters.
+            An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
 
         self.reset_calcs()
@@ -379,20 +385,24 @@ class SimpleProject(object):
 
         return jacobian_array
 
-    def flat_jacobian(self, global_param_vector):
+    def rss_gradient(self, global_param_vector):
         """
-        Returns the gradient of the cost function.
+        Returns the gradient of the cost function (the residual sum of squares).
 
         The cost function is:
-        .. math::
-            C(\\theta)= 0.5*(\\sum{B*Y(\\theta)_{sim} - Y_{exp}})^2
 
-        This function returns :math:`\\frac{\\partial C}}{\\partial \\theta}`
+        .. math::
+            C(\\theta)= 0.5*(\\sum{BY(\\theta)_{sim} - Y_{exp}})^2
+
+        This function returns
+
+        .. math::
+            \\frac{\\partial C}{\\partial \\theta}
 
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
         -------
@@ -408,13 +418,14 @@ class SimpleProject(object):
         Returns the sum squared residuals across all experiments
 
         Returns:
+
         .. math::
-            C(\\theta)= 0.5*(\\sum{B*Y(\\theta)_{sim} - Y_{exp}})^2
+            C(\\theta)= 0.5*(\\sum{BY_{sim} - Y_{exp}})^2
 
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
         -------
@@ -431,7 +442,7 @@ class SimpleProject(object):
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
 
         grad: :class:`~numpy:numpy.ndarray`, optional
             Cost function gradient.  Only used for gradient based optimization by nlopt
@@ -442,7 +453,7 @@ class SimpleProject(object):
             The sum of all residuals
         """
         if grad.size > 0:
-            grad[:] = self.flat_jacobian(global_param_vector)
+            grad[:] = self.rss_gradient(global_param_vector)
         return self.sum_square_residuals(global_param_vector)
 
     def load_param_dict(self, param_dict, default_value=0.0):
@@ -499,3 +510,9 @@ class SimpleProject(object):
             for exp_settings, global_idx in self.global_param_idx[p_group].items():
                 param_dict[p_group][exp_settings] = param_vector[global_idx]
         return param_dict
+
+    def model_hessian(self, global_param_vector):
+        pass
+
+    def parameter_uncertainty(self, global_param_vector):
+        pass

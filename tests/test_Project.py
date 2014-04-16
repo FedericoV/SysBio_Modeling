@@ -5,7 +5,7 @@ import numpy as np
 from statsmodels.tools.numdiff import approx_fprime
 
 from experiment.experiments import Experiment
-from project.experiment_model_ensemble import SimpleProject
+from project import Project
 from model import ode_model
 from simple_model_settings import settings as experiment_settings
 from jittable_model import model
@@ -22,7 +22,7 @@ def _simple_model_analytical_jac(k_deg, k_synt, t):
     return np.vstack((k_deg_jac, k_synt_jac))
 
 
-class TestSimpleProject(TestCase):
+class TestProject(TestCase):
     @classmethod
     def setUpClass(cls):
         exp_timepoints = np.array([0., 11.11111111, 22.22222222, 33.33333333,
@@ -57,7 +57,7 @@ class TestSimpleProject(TestCase):
         cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
 
         measurement_variable_map = {'Variable_1': 0}
-        proj = SimpleProject(cls.ode_model, experiments, experiment_settings, measurement_variable_map)
+        proj = Project(cls.ode_model, experiments, experiment_settings, measurement_variable_map)
         cls.proj = proj
 
         global_param_vector = np.zeros((3,))
@@ -73,7 +73,7 @@ class TestSimpleProject(TestCase):
         cls.log_global_param_vector = log_global_param_vector
 
     def test__project_initialization(self):
-        proj = TestSimpleProject.proj
+        proj = TestProject.proj
         assert (0 in proj._measurements_idx['Variable_1'])
         assert (1 in proj._measurements_idx['Variable_1'])
         global_param_idx = proj.global_param_idx
@@ -85,36 +85,36 @@ class TestSimpleProject(TestCase):
             assert (global_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
             # Check parameters are set properly
 
-        assert (proj.n_residuals == 35)
+        assert (proj._n_residuals == 35)
 
     def test_set_measurement_idx(self):
-        proj = TestSimpleProject.proj
+        proj = TestProject.proj
         assert (0 in proj._measurements_idx['Variable_1'])
         assert (1 in proj._measurements_idx['Variable_1'])
 
     @raises(ValueError)
     def test_null_param_vector(self):
-        proj = TestSimpleProject.proj
+        proj = TestProject.proj
         proj.global_param_vector = None
         proj._sim_experiments()
 
     def test_sim_experiments(self):
-        proj = TestSimpleProject.proj
-        log_global_param_vector = TestSimpleProject.log_global_param_vector
+        proj = TestProject.proj
+        log_global_param_vector = TestProject.log_global_param_vector
         proj(log_global_param_vector)
-        assert (len(proj.all_sims) == 2)
+        assert (len(proj._all_sims) == 2)
 
         for exp_idx, exp in enumerate(proj.experiments):
             exp_data = exp.measurements['Variable_1']['value'] / 3.75
             exp_t = exp.measurements['Variable_1']['timepoints']
             exp_data = exp_data[exp_t != 0]
-            sim = proj.all_sims[exp_idx]['Variable_1']
+            sim = proj._all_sims[exp_idx]['Variable_1']
             assert (np.allclose(exp_data, sim['value'], rtol=0.05))
 
-        assert (np.allclose(proj.scale_factors['Variable_1'], 3.75, rtol=0.05))
+        assert (np.allclose(proj._scale_factors['Variable_1'], 3.75, rtol=0.05))
         # Excellent
 
-        for exp_idx, res_block in enumerate(proj.all_residuals):
+        for exp_idx, res_block in enumerate(proj._all_residuals):
             exp = proj.experiments[exp_idx]
             measurement = exp.measurements['Variable_1']['value']
             total_measurement = np.sum(measurement)
@@ -122,12 +122,12 @@ class TestSimpleProject(TestCase):
             assert (total_measurement * 0.01 > total_res)
 
     def test_model_jacobian(self):
-        proj = TestSimpleProject.proj
-        log_global_param_vector = TestSimpleProject.log_global_param_vector
+        proj = TestProject.proj
+        log_global_param_vector = TestProject.log_global_param_vector
         global_param_vector = np.exp(log_global_param_vector)
         proj.global_jacobian(log_global_param_vector)
 
-        for exp_idx, jac_block in enumerate(proj.model_jacobian):
+        for exp_idx, jac_block in enumerate(proj._model_jacobian):
             exp = proj.experiments[exp_idx]
             k_synt_idx = exp.param_global_vector_idx['k_synt']
             k_deg_idx = exp.param_global_vector_idx['k_deg']
@@ -147,21 +147,21 @@ class TestSimpleProject(TestCase):
             assert np.allclose(k_deg_analytical_jac, k_deg_sensitivity_jac, rtol=0.05)
 
     def test_scale_factor_jacobian(self):
-        proj = TestSimpleProject.proj
-        log_global_param_vector = TestSimpleProject.log_global_param_vector
+        proj = TestProject.proj
+        log_global_param_vector = TestProject.log_global_param_vector
         proj.global_jacobian(log_global_param_vector)
-        scale_factors_jacobian = proj.scale_factors_jacobian['Variable_1']
+        _scale_factors_jacobian = proj._scale_factors_jacobian['Variable_1']
 
         def get_scale_factors(x):
             proj(x)
-            return proj.scale_factors['Variable_1']
+            return proj._scale_factors['Variable_1']
 
         num_scale_factors = approx_fprime(log_global_param_vector, get_scale_factors, centered=True)
-        assert np.allclose(scale_factors_jacobian, num_scale_factors, rtol=0.01)
+        assert np.allclose(_scale_factors_jacobian, num_scale_factors, rtol=0.01)
 
     def test_global_jacobian(self):
         # Known test failure.  Most likely due to numerical failures in scaling factor.
-        proj = TestSimpleProject.proj
+        proj = TestProject.proj
         global_param_vector = np.zeros((3,))
         low_deg_idx = proj.global_param_idx['Group_1'][('Low',)]
         high_deg_idx = proj.global_param_idx['Group_1'][('High',)]
@@ -177,11 +177,11 @@ class TestSimpleProject(TestCase):
         def get_scaled_sims(x):
             proj(x)
             sims = []
-            for sim in proj.all_sims:
+            for sim in proj._all_sims:
                 exp_sim = sim['Variable_1']['value']
                 sims.extend(exp_sim.tolist())
             sims = np.array(sims)
-            scale = proj.scale_factors['Variable_1']
+            scale = proj._scale_factors['Variable_1']
             return sims * scale
 
         num_global_jac = approx_fprime(log_global_param_vector, get_scaled_sims, centered=True)
@@ -192,14 +192,14 @@ class TestSimpleProject(TestCase):
         global_param_vector[synt_idx] = 0.05
         log_global_param_vector = np.log(global_param_vector)
 
-        sens_rss_jac = proj.flat_jacobian(log_global_param_vector)
+        sens_rss_jac = proj.rss_gradient(log_global_param_vector)
         num_rss_jac = approx_fprime(log_global_param_vector, proj.sum_square_residuals, centered=True)
         assert np.allclose(sens_rss_jac, num_rss_jac, atol=0.000001)
 
 
     @raises(AssertionError)
     def test_scale_factors_change(self):
-        proj = TestSimpleProject.proj
+        proj = TestProject.proj
         global_param_vector = np.zeros((3,))
         low_deg_idx = proj.global_param_idx['Group_1'][('Low',)]
         high_deg_idx = proj.global_param_idx['Group_1'][('High',)]
@@ -214,24 +214,24 @@ class TestSimpleProject(TestCase):
         mod_param_vector[0] += 0.2
 
         proj(log_global_param_vector)
-        old_scale_factor = proj.scale_factors['Variable_1'].copy()
+        old_scale_factor = proj._scale_factors['Variable_1'].copy()
         # Changing param vector:
         proj(mod_param_vector)
-        new_scale_factor = proj.scale_factors['Variable_1'].copy()
+        new_scale_factor = proj._scale_factors['Variable_1'].copy()
 
         assert np.allclose(old_scale_factor, new_scale_factor, rtol=0.0001)
 
     def test_optimization(self):
         from leastsq_mod import leastsq as geo_leastsq
         # Known test failure.  Most likely due to numerical failures in scaling factor.
-        proj = TestSimpleProject.proj
+        proj = TestProject.proj
 
         base_guess = np.log(np.ones((3,))*0.01)
 
         out = geo_leastsq(proj, base_guess, Dfun=proj.global_jacobian)
         #print '\n\n'
         #print np.exp(out)
-        #print proj.scale_factors['Variable_1']
+        #print proj._scale_factors['Variable_1']
 
         #print np.sum(proj(base_guess))
         #print np.sum(proj(out))

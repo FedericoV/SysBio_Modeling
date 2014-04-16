@@ -1,7 +1,7 @@
 __author__ = 'Federico Vaggi'
 
 
-from symbolic.sympy_tools import make_sensitivity_model
+from symbolic import make_sensitivity_model
 from unittest import TestCase
 from nose.tools import raises
 import simple_model

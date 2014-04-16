@@ -15,7 +15,7 @@ class Experiment(object):
     name: string
         The name of the experiment
     exp_data: dict
-        A dictionary, containing measurement(s) for multiple species
+        A dictionary, containing measurement(s) for multiple species. \n
         Example:
             exp_data['Species_1'] = {'value': 0, 1, 2, 'timepoints': 0, 5, 10}
     fixed_parameters: dict, optional
@@ -24,9 +24,9 @@ class Experiment(object):
         Example:
             fixed_params = {'kon': 0.05, 'koff': 0.013}
     experiment_settings:  dict, optional
-        A dictionary of settings upon which parameters that are optimized
-        can vary.  Parameter dependency upon settings is specified in a separate file, allowing us to use the same
-        model and experiments, but only vary the dependencies.
+        A dictionary of settings upon which parameters that are optimized can vary.\n
+        Parameter dependency upon settings is specified in a separate file, allowing us
+        to use the same model and experiments, but only vary the dependencies.\n
         Example:
             param_settings = {'decay_rate': 'high'}
         """

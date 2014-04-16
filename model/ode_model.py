@@ -13,7 +13,7 @@ class OdeModel(ModelABC):
     Attributes
     ----------
     model : func (x0, t, xout, p)
-        A callable function that computes the time derivative at timesteps t as a function of parameters p
+        A callable function that computes the time derivative at timesteps t as a function of parameters p.\n
         Signature is slightly different from the `scipy.odeint` signature due to limitations of `numba`
     sens_model: func (x0, t, xout, p)
         A callable function that computes the sensitivity equations for model.  Can be generated using the tools
@@ -99,20 +99,16 @@ class OdeModel(ModelABC):
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
 
-        The jacobian of the model is:
+        The jacobian of the model is: :math:`J = \\frac{\\partial Y_{sim}}{\\partial \\theta}`
 
-        .. math::
-            J = \\frac{\\partial Y_{sim}}{\\partial \\theta}
-
-        Where :math:`Y_{sim}` represents the model, and :math:`\\theta` the vector of parameters.  Note, since the model
-        is often evaluated in log-space, the jacobian includes the chain rule term.
+        Since the model is often evaluated in log-space, the jacobian includes the chain rule term.
 
         :math:`Y_{sim}` is evaluated at all timepoints where there is a measurement.
 
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
         experiment: Experiment
             The specific experiment for which we want to create the parameter vector
         variable_idx: dict
@@ -126,7 +122,7 @@ class OdeModel(ModelABC):
 
         Notes
         -----
-        The jacobian is returned with respect to the global parameters, not the model parameters.
+        The jacobian is returned with respect to the global parameters, not the model parameters.\n
         The jacobian with respect to global parameters that aren't in the experiment will thus be zero.
         """
 
@@ -161,7 +157,7 @@ class OdeModel(ModelABC):
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
         experiment: Experiment
             The experiment we wish to simulate
         variable_idx: dict
@@ -216,17 +212,15 @@ class OdeModel(ModelABC):
         Sometimes, it's convenient to optimize models in logspace to avoid negative values.
         Instead of doing :math:`Y_{sim}(\\theta)` we compute :math:`Y_{sim}(f(\\theta))`
 
-        Where :math:`f` can be :math:`e^{\\theta}`
-
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
         -------
         transformated_parameters: :class:`~numpy:numpy.ndarray`
-            Vector containing the parameters after they are transformed
+            An (n,) dimensional array the parameters after applying a transformation
 
         See Also
         --------
@@ -240,20 +234,17 @@ class OdeModel(ModelABC):
     def param_transform_derivative(global_param_vector):
         """
         The derivative of the function applied to the parameters prior to the simulation.
-        This function computes:
-
-        .. math::
-            \\frac{\\partial f}{\\partial \\theta}
+        :math:`\\frac{\\partial f}{\\partial \\theta}`
 
         Parameters
         ----------
         global_param_vector: :class:`~numpy:numpy.ndarray`
-            Vector containing all parameters being optimized across the project
+            An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
         -------
         transformation_derivative: :class:`~numpy:numpy.ndarray`
-            Vector containing the derivatives of the parameter transformation function
+            An (n,) dimensional array  containing the derivatives of the parameter transformation function
 
         See Also
         --------
