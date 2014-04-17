@@ -1,3 +1,7 @@
+ordered_params = [ 'k_deg', 'k_synt' ]
+n_vars = 1
+
+
 def model(y, t, yout, p):
 
 

@@ -125,7 +125,7 @@ class TestProject(TestCase):
         proj = TestProject.proj
         log_global_param_vector = TestProject.log_global_param_vector
         global_param_vector = np.exp(log_global_param_vector)
-        proj.global_jacobian(log_global_param_vector)
+        proj.calc_project_jacobian(log_global_param_vector)
 
         for exp_idx, jac_block in enumerate(proj._model_jacobian):
             exp = proj.experiments[exp_idx]
@@ -149,7 +149,7 @@ class TestProject(TestCase):
     def test_scale_factor_jacobian(self):
         proj = TestProject.proj
         log_global_param_vector = TestProject.log_global_param_vector
-        proj.global_jacobian(log_global_param_vector)
+        proj.calc_project_jacobian(log_global_param_vector)
         _scale_factors_jacobian = proj._scale_factors_jacobian['Variable_1']
 
         def get_scale_factors(x):
@@ -159,7 +159,7 @@ class TestProject(TestCase):
         num_scale_factors = approx_fprime(log_global_param_vector, get_scale_factors, centered=True)
         assert np.allclose(_scale_factors_jacobian, num_scale_factors, rtol=0.01)
 
-    def test_global_jacobian(self):
+    def test_calc_project_jacobian(self):
         # Known test failure.  Most likely due to numerical failures in scaling factor.
         proj = TestProject.proj
         global_param_vector = np.zeros((3,))
@@ -172,7 +172,7 @@ class TestProject(TestCase):
         global_param_vector[synt_idx] = 0.01
         log_global_param_vector = np.log(global_param_vector)
 
-        sens_jacobian = proj.global_jacobian(log_global_param_vector)
+        sens_jacobian = proj.calc_project_jacobian(log_global_param_vector)
 
         def get_scaled_sims(x):
             proj(x)
@@ -192,8 +192,8 @@ class TestProject(TestCase):
         global_param_vector[synt_idx] = 0.05
         log_global_param_vector = np.log(global_param_vector)
 
-        sens_rss_jac = proj.rss_gradient(log_global_param_vector)
-        num_rss_jac = approx_fprime(log_global_param_vector, proj.sum_square_residuals, centered=True)
+        sens_rss_jac = proj.calc_rss_gradient(log_global_param_vector)
+        num_rss_jac = approx_fprime(log_global_param_vector, proj.calc_sum_square_residuals, centered=True)
         assert np.allclose(sens_rss_jac, num_rss_jac, atol=0.000001)
 
 
@@ -228,7 +228,7 @@ class TestProject(TestCase):
 
         base_guess = np.log(np.ones((3,))*0.01)
 
-        out = geo_leastsq(proj, base_guess, Dfun=proj.global_jacobian)
+        out = geo_leastsq(proj, base_guess, Dfun=proj.calc_project_jacobian)
         #print '\n\n'
         #print np.exp(out)
         #print proj._scale_factors['Variable_1']

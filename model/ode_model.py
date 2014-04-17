@@ -74,6 +74,9 @@ class OdeModel(ModelABC):
                 except KeyError:
                     if p_name not in experiment.fixed_parameters:
                         raise KeyError('%s not in %s fixed parameters.')
+                    else:
+                        continue
+                        # We don't calculate the jacobian wrt fixed parameters.
                 var_jacobian[:, global_idx] += local_sens[:, p_model_idx]
             jacobian_dict[measurement] = var_jacobian * transformed_params_deriv
 

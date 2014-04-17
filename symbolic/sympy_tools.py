@@ -48,9 +48,16 @@ def parse_model_file(model_fh):
 
 
 def write_jit_model(variables, diff_eqns, params, output_fh,
-                    sens_eqns=None):
+                    sens_eqns=None, write_ordered_params=False):
     lines = []
     pad = "    "
+
+    if write_ordered_params:
+        ordered_param_str = ", ".join(["'%s'" %par for par in params.keys()])
+        lines.append("ordered_params = [ %s ]" %ordered_param_str)
+        lines.append("n_vars = %d" % len(variables))
+        lines.append("\n")
+
     if sens_eqns is None:
         lines.append("def model(y, t, yout, p):")
     else:
@@ -146,7 +153,7 @@ def write_latex_file(model_fh, output_fh, extended=True):
 
 
 def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
-                           calculate_sensitivities=True):
+                           calculate_sensitivities=True, write_ordered_params=None):
     if 'module' in str(type(model_fh)):
         import inspect
 
@@ -199,7 +206,13 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
     else:
         sens_eqns = None
 
+    if write_ordered_params is None:
+        if calculate_sensitivities is True:
+            write_ordered_params = False
+        else:
+            write_ordered_params = True
+
     write_jit_model(variables, expanded_eqns, params, sens_model_fh,
-                    sens_eqns)
+                    sens_eqns, write_ordered_params)
 
     return model_dict

@@ -9,17 +9,17 @@ import numpy as np
 ########################################################################################
 
 
-def _accumulate__scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim):
-    sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data))
-    sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std)))
+def _accumulate__scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
+    sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
+    sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
 
 
 def _accumulate__scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
-                                   sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim):
-    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1)  # Vector
-    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1)  # Vector
-    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2))  # Scalar
-    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2))  # Scalar
+                                   sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim, exp_weight=1):
+    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1) * exp_weight  # Vector
+    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1) * exp_weight  # Vector
+    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2)) * exp_weight  # Scalar
+    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2)) * exp_weight  # Scalar
 
 
 def _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
@@ -50,6 +50,7 @@ class Project(object):
         if type(experiments) is not list:
             warnings.warn('Make sure that the iterable passed has a stable iteration order')
         self.experiments = experiments
+        self.eperiments_weights = [1.0 for experiment in experiments]
         # We expect that we always iterate through experiments in same order.
 
         self.model_parameter_settings = model_parameter_settings
@@ -64,6 +65,17 @@ class Project(object):
         self._scale_factors = {}
         self._scale_factors_jacobian = {}
         self.global_param_vector = None
+
+    def get_experiment_index(self, exp_name):
+        for exp_idx, experiment in enumerate(self.experiments):
+            if exp_name == experiment.name:
+                return exp_idx
+        raise KeyError('%s not in experiments')
+
+    def update_experimental_weights(self, new_weights):
+        for exp_name, exp_weight in new_weights:
+            exp_idx = self.get_experiment_index(exp_name)
+            self.experiments_weights[exp_idx] = exp_weight
 
     def reset_calcs(self):
         self._all_sims = None
@@ -200,6 +212,10 @@ class Project(object):
 
             for exp_idx in experiment_list:
                 experiment = self.experiments[exp_idx]
+                try:
+                    exp_weight = self.experiments_weights[exp_idx]
+                except KeyError:
+                    exp_weight = 1
                 measurement = experiment.measurements[measure_name]
                 exp_timepoints = measurement['timepoints']
 
@@ -207,7 +223,7 @@ class Project(object):
                 exp_std = measurement['std_dev'][exp_timepoints != 0]
 
                 sim_data = self._all_sims[exp_idx][measure_name]['value']
-                _accumulate__scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim)
+                _accumulate__scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
 
             self._scale_factors[measure_name] = sim_dot_exp / sim_dot_sim
 
@@ -223,6 +239,10 @@ class Project(object):
             sim_dot_exp = np.zeros((1,), dtype='float64')
 
             for exp_idx in experiment_list:
+                try:
+                    exp_weight = self.experiments_weights[exp_idx]
+                except KeyError:
+                    exp_weight = 1
                 experiment = self.experiments[exp_idx]
                 measurement = experiment.measurements[measure_name]
                 exp_data = measurement['value']
@@ -236,7 +256,7 @@ class Project(object):
                 model_sens = self._model_jacobian[exp_idx][measure_name]  # Matrix
 
                 _accumulate__scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                               sens_dot_exp_data, sens_dot_sim)
+                                               sens_dot_exp_data, sens_dot_sim, exp_weight)
 
             scale_jac_out = np.zeros((n_global_pars,), dtype='float64')
             _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out)
@@ -247,6 +267,12 @@ class Project(object):
         """
         residuals = OrderedDict()
         experiment = self.experiments[exp_idx]
+
+        try:
+            exp_weight = self.experiments_weights[exp_idx]
+        except KeyError:
+            exp_weight = 1
+
         for measure_name in experiment.measurements:
             try:
                 scale = self._scale_factors[measure_name]
@@ -332,7 +358,7 @@ class Project(object):
                 res_idx += len(res_block)
         return residual_array
 
-    def global_jacobian(self, global_param_vector):
+    def calc_project_jacobian(self, global_param_vector, include_scale_factors=True):
         """
         Given a cost function:
 
@@ -356,9 +382,13 @@ class Project(object):
         global_param_vector: :class:`~numpy:numpy.ndarray`
             An (n,) dimensional array containing the parameters being optimized in the project
 
+        include_scale_factors: bool, optional
+            If true, we include the derivative terms with respect to B.  If false, we only consider
+            the jacobian with respect to the model (useful for calculating Hessian).
+
         Returns
         -------
-        global_jacobian: :class:`~numpy:numpy.ndarray`
+        calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
 
@@ -379,13 +409,17 @@ class Project(object):
                 measure_sim_jac = exp_jac[measure]
                 measure_scale = self._scale_factors[measure]
                 measure_scale_jac = self._scale_factors_jacobian[measure]
-                jac = measure_sim_jac*measure_scale + measure_scale_jac.T*measure_sim[:, np.newaxis]
+                if include_scale_factors:
+                    jac = measure_sim_jac*measure_scale + measure_scale_jac.T*measure_sim[:, np.newaxis]
+                    # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
+                else:
+                    jac = measure_sim_jac
                 jacobian_array[res_idx:res_idx+len(measure_sim), :] = jac
                 res_idx += len(measure_sim)
 
         return jacobian_array
 
-    def rss_gradient(self, global_param_vector):
+    def calc_rss_gradient(self, global_param_vector):
         """
         Returns the gradient of the cost function (the residual sum of squares).
 
@@ -406,14 +440,14 @@ class Project(object):
 
         Returns
         -------
-        global_jacobian: :class:`~numpy:numpy.ndarray`
+        calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array.
         """
-        jacobian_matrix = self.global_jacobian(global_param_vector)
+        jacobian_matrix = self.calc_project_jacobian(global_param_vector)
         residuals = self(global_param_vector)
         return (jacobian_matrix.T * residuals).sum(axis=1)
 
-    def sum_square_residuals(self, global_param_vector):
+    def calc_sum_square_residuals(self, global_param_vector):
         """
         Returns the sum squared residuals across all experiments
 
@@ -453,8 +487,8 @@ class Project(object):
             The sum of all residuals
         """
         if grad.size > 0:
-            grad[:] = self.rss_gradient(global_param_vector)
-        return self.sum_square_residuals(global_param_vector)
+            grad[:] = self.calc_rss_gradient(global_param_vector)
+        return self.calc_sum_square_residuals(global_param_vector)
 
     def load_param_dict(self, param_dict, default_value=0.0):
         """
