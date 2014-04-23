@@ -2,6 +2,8 @@ from collections import OrderedDict, defaultdict
 import warnings
 
 import numpy as np
+import scipy
+
 
 
 ########################################################################################
@@ -9,7 +11,7 @@ import numpy as np
 ########################################################################################
 
 
-def _accumulate__scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
+def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
     sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
     sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
 
@@ -49,8 +51,9 @@ class Project(object):
         self.model = model
         if type(experiments) is not list:
             warnings.warn('Make sure that the iterable passed has a stable iteration order')
+
         self.experiments = experiments
-        self.eperiments_weights = [1.0 for experiment in experiments]
+        self.experiments_weights = [1.0 for experiment in experiments]
         # We expect that we always iterate through experiments in same order.
 
         self.model_parameter_settings = model_parameter_settings
@@ -59,12 +62,21 @@ class Project(object):
 
         self._n_residuals = self._calc__n_residuals()
         self._measurements_idx = self._set_measurement_idx()
+
         self._all_sims = None
         self._all_residuals = None
         self._model_jacobian = None
+
         self._scale_factors = {}
         self._scale_factors_jacobian = {}
+        self._scale_factors_priors = {}
+
         self.global_param_vector = None
+
+    def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
+        if measure_name not in self.measurement_variable_map:
+            raise KeyError('%s not in project measures' % measure_name)
+        self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
 
     def get_experiment_index(self, exp_name):
         for exp_idx, experiment in enumerate(self.experiments):
@@ -223,7 +235,7 @@ class Project(object):
                 exp_std = measurement['std_dev'][exp_timepoints != 0]
 
                 sim_data = self._all_sims[exp_idx][measure_name]['value']
-                _accumulate__scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
+                _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
 
             self._scale_factors[measure_name] = sim_dot_exp / sim_dot_sim
 
@@ -550,3 +562,69 @@ class Project(object):
 
     def parameter_uncertainty(self, global_param_vector):
         pass
+
+    def _calc_scale_factor_entropy(self, measure_name, temperature):
+        """
+        Implementation taken from SloppyCell.  All credit to Sethna group, all mistakes are mine
+        """
+        if measure_name not in self._scale_factors_priors:
+            return 0
+
+        log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
+        for measure_name, experiment_list in self._measurements_idx.items():
+            sim_dot_exp = np.zeros((1,), dtype='float64')
+            sim_dot_sim = np.zeros((1,), dtype='float64')
+
+            for exp_idx in experiment_list:
+                experiment = self.experiments[exp_idx]
+                try:
+                    exp_weight = self.experiments_weights[exp_idx]
+                except KeyError:
+                    exp_weight = 1
+                measurement = experiment.measurements[measure_name]
+                exp_timepoints = measurement['timepoints']
+
+                exp_data = measurement['value'][exp_timepoints != 0]
+                exp_std = measurement['std_dev'][exp_timepoints != 0]
+
+                sim_data = self._all_sims[exp_idx][measure_name]['value']
+                _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
+
+        def integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
+            """Copied from SloppyCell"""
+            B_centered = np.exp(u) * B_best
+            lB = u + log_B_best
+            return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
+
+        optimal_scale_factor = sim_dot_exp / sim_dot_sim
+        log_optimal_scale_factor = np.log(optimal_scale_factor)
+
+        integral_args = (sim_dot_sim, sim_dot_exp, log_scale_factor_prior, log_sigma_scale_factor, temperature,
+                         optimal_scale_factor, log_optimal_scale_factor)
+        ans, temp = scipy.integrate.quad(integrand, -scipy.inf, scipy.inf, args=integral_args, limit=1000)
+
+        entropy = np.log(ans)
+        return entropy
+
+    def get_total_scale_factor_entropy(self, temperature=1.0):
+        """
+        Calculates the entropy from the scale factors.  Currently only log priors are supported.
+
+        This term is useful when doing sampling (and optimization) to keep the sampling function
+        in a narrow range near the minima.
+
+        Parameters
+        ----------
+        temperature: float, optional
+            The temperature for the evaluation of the entropy
+
+        Returns
+        -------
+        param_vector: float
+            The sum of the entropy of all scale factors in the model
+        """
+        entropy = 0
+        for measure_name in self.measurement_variable_map:
+            entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
+        return entropy
+
