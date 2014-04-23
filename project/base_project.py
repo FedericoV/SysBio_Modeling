@@ -60,17 +60,19 @@ class Project(object):
         self.measurement_variable_map = measurement_variable_map
         self.global_param_idx, self.n_global_params, self.residuals_per_param = self._set_local_param_idx()
 
+        # Convenience variables that depend on constructor arguments.
         self._n_residuals = self._calc__n_residuals()
         self._measurements_idx = self._set_measurement_idx()
 
+        # Misc Constraints
+        self._scale_factors_priors = {}
+
+        # Variables modified upon simulation:
         self._all_sims = None
         self._all_residuals = None
         self._model_jacobian = None
-
         self._scale_factors = None
         self._scale_factors_jacobian = None
-        self._scale_factors_priors = {}
-
         self.global_param_vector = None
 
     def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
