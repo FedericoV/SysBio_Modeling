@@ -67,8 +67,8 @@ class Project(object):
         self._all_residuals = None
         self._model_jacobian = None
 
-        self._scale_factors = {}
-        self._scale_factors_jacobian = {}
+        self._scale_factors = None
+        self._scale_factors_jacobian = None
         self._scale_factors_priors = {}
 
         self.global_param_vector = None
@@ -93,8 +93,8 @@ class Project(object):
         self._all_sims = None
         self._all_residuals = None
         self._model_jacobian = None
-        self._scale_factors = {}
-        self._scale_factors_jacobian = {}
+        self._scale_factors = None
+        self._scale_factors_jacobian = None
         self.global_param_vector = None
 
     def _set_measurement_idx(self):
@@ -218,6 +218,7 @@ class Project(object):
         """
         Analytically calculates the optimal scale factor for measurements that are in arbitrary units
         """
+        self._scale_factors = {}
         for measure_name, experiment_list in self._measurements_idx.items():
             sim_dot_exp = np.zeros((1,), dtype='float64')
             sim_dot_sim = np.zeros((1,), dtype='float64')
@@ -243,6 +244,7 @@ class Project(object):
         """
         Analytically calculates the jacobian of the scale factors for each measurement
         """
+        self._scale_factors_jacobian = {}
         n_global_pars = len(self.global_param_vector)
         for measure_name, experiment_list in self._measurements_idx.items():
             sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
@@ -356,11 +358,13 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        self.reset_calcs()
-        self.global_param_vector = np.copy(global_param_vector)
-        self._sim_experiments()
-        self._calc__scale_factors()
-        self._calc_residuals()
+        if self.global_param_vector is None or not np.alltrue(global_param_vector == self.global_param_vector):
+            self.reset_calcs()
+            self.global_param_vector = np.copy(global_param_vector)
+
+            self._sim_experiments()
+            self._calc__scale_factors()
+            self._calc_residuals()
 
         residual_array = np.zeros((self._n_residuals,))
         res_idx = 0
@@ -403,15 +407,22 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
+        if self.global_param_vector is None or not np.alltrue(global_param_vector == self.global_param_vector):
+            self.reset_calcs()
+            self.global_param_vector = np.copy(global_param_vector)
 
-        self.reset_calcs()
-        self.global_param_vector = np.copy(global_param_vector)
-        self._sim_experiments()
-        self._calc__scale_factors()
-        self._calc_residuals()
+            self._sim_experiments()
+            self._calc__scale_factors()
+            self._calc_residuals()
 
-        self._calc__model_jacobian()
-        self._calc__scale_factors_jacobian()
+            self._calc__model_jacobian()
+            self._calc__scale_factors_jacobian()
+
+        elif self._model_jacobian is None:
+            self._calc__model_jacobian()
+
+        elif self._scale_factors_jacobian is None:
+            self._calc__scale_factors_jacobian()
 
         jacobian_array = np.zeros((self._n_residuals, len(global_param_vector)))
         res_idx = 0
