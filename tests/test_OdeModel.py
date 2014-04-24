@@ -3,7 +3,8 @@ __author__ = 'federico'
 
 import numpy as np
 
-from experiment.experiments import Experiment
+from experiment import Experiment
+from measurement import TimecourseMeasurement
 from unittest import TestCase
 from model import OdeModel
 from collections import OrderedDict
@@ -19,8 +20,8 @@ class TestOdeModel(TestCase):
                                    88.88888889,  100.])
         exp_measures = np.array([0.74524402,  1.53583955,  2.52502335,  3.92107899,  4.58210253,
                                  5.45036258,  7.03185055,  7.75907324,  9.30805318,  9.751119])
-        exp_data = {'Variable_1': {'timepoints': exp_timepoints, 'value': np.log(exp_measures)}}
-        simple_exp = Experiment('Simple_Experiment', exp_data)
+        measurement = TimecourseMeasurement('Variable_1', exp_measures, exp_timepoints)
+        simple_exp = Experiment('Simple_Experiment', measurement)
         cls.simple_exp = simple_exp
         cls.simple_exp.param_global_vector_idx = OrderedDict()
         cls.simple_exp.param_global_vector_idx['k_deg'] = 0
@@ -59,26 +60,30 @@ class TestOdeModel(TestCase):
 
     def test_calc_jacobian(self):
         variable_idx = TestOdeModel.variable_idx
-        exp = TestOdeModel.simple_exp
+        experiment = TestOdeModel.simple_exp
         param_vector = np.log(np.array([0.001,  0.01]))
+
         var_name = variable_idx.keys()[0]
-        exp_t = exp.measurements[var_name]['timepoints']
+        var_idx = variable_idx.values()[0]
+
+        measurement = experiment.get_variable_measurements(var_name)
+        exp_t = measurement.timepoints
         exp_t = exp_t[exp_t != 0]
         n_res = len(exp_t)
 
-        y_sim = TestOdeModel.ode_model.calc_jacobian(param_vector, exp, variable_idx)
+        y_sim = TestOdeModel.ode_model.calc_jacobian(param_vector, experiment, variable_idx)
         assert (n_res == y_sim[var_name].shape[0])
         # The Jacobian should have dimensions (n_res, n_global_params)
-        n_exp_par = len(exp.param_global_vector_idx)
 
+        n_exp_par = len(experiment.param_global_vector_idx)
         assert (n_exp_par == y_sim[var_name].shape[1])
 
         # Check with analytical derivative now
         exponential_param_vector = np.exp(param_vector)
-        k_synt_idx = exp.param_global_vector_idx['k_synt']
+        k_synt_idx = experiment.param_global_vector_idx['k_synt']
         k_synt = exponential_param_vector[k_synt_idx]
 
-        k_deg_idx = exp.param_global_vector_idx['k_deg']
+        k_deg_idx = experiment.param_global_vector_idx['k_deg']
         k_deg = exponential_param_vector[k_deg_idx]
 
         k_synt_analytical_jac = 1/k_deg - np.exp(-k_deg*exp_t)/k_deg

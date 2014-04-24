@@ -1,6 +1,5 @@
-from collections import OrderedDict
-
 import numpy as np
+from measurement import TimecourseMeasurement
 
 
 class Experiment(object):
@@ -14,10 +13,8 @@ class Experiment(object):
     ----------
     name: string
         The name of the experiment
-    exp_data: dict
-        A dictionary, containing measurement(s) for multiple species. \n
-        Example:
-            exp_data['Species_1'] = {'value': 0, 1, 2, 'timepoints': 0, 5, 10}
+    exp_data: :class:`~TimecourseMeasurement:SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement`
+        A timeseries measurement.
     fixed_parameters: dict, optional
         A dictionary of parameter_name, value pairs which contains parameters which are
         fixed in a particular experiment
@@ -31,59 +28,38 @@ class Experiment(object):
             param_settings = {'decay_rate': 'high'}
         """
 
-    def __init__(self, name, exp_data, fixed_parameters=None,
+    def __init__(self, name, measurements, fixed_parameters=None,
                  experiment_settings=None):
 
         self.name = name
         self.fixed_parameters = fixed_parameters
         self.settings = {}
-        self.measurements = OrderedDict()
         self.initial_conditions = {}
 
         if experiment_settings is not None:
             for key, value in experiment_settings.items():
                 self.settings[key] = value
 
-        for variable in exp_data:
-            self.measurements[variable] = {}
-            measurements = exp_data[variable]
-            timepoints = measurements['timepoints']
-            value = measurements['value']
+        self.measurements = []
+        if hasattr(measurements, '__iter__'):
+            for measurement in measurements:
+                self.add_measurement(measurement)
 
-            if 'std_dev' not in measurements:
-                std_dev = np.ones_like(value)
-
-            else:
-                std_dev = measurements['std_dev']
-
-            if not ((len(timepoints) == len(value)) and (len(timepoints) == len(std_dev))):
-                raise ValueError('Number of timepoints does not match number of measures')
-
-            self.measurements[variable]['timepoints'] = timepoints
-            self.measurements[variable]['value'] = value
-            self.measurements[variable]['std_dev'] = std_dev
-
+        else:
+            self.measurements.append(measurements)  # Make sure these are unique per variable
         self.param_global_vector_idx = None
 
-    def drop_timepoint_zero(self):
+    def drop_timepoint_zero(self, variable=None):
         """
         Removes all measurements occurring at timepoint zero.
 
         This is useful because often we don't wish to fit the t0 of our model since
         it does not depend on the parameters.
         """
-        for measurement in self.measurements:
-            timepoints = self.measurements[measurement]['timepoints']
-            values = self.measurements[measurement]['value']
-            std_dev = self.measurements[measurement]['std_dev']
-
-            values = values[timepoints != 0]
-            std_dev = std_dev[timepoints != 0]
-            timepoints = timepoints[timepoints != 0]
-
-            self.measurements[measurement]['value'] = values
-            self.measurements[measurement]['timepoints'] = timepoints
-            self.measurements[measurement]['std_dev'] = std_dev
+        for measure_idx in range(len(self.measurements)):
+            measurement_variable = self.measurements[measure_idx].variable_name
+            if (variable is None) or (measurement_variable == variable):
+                self.measurements[measure_idx].drop_timepoint_zero()
 
     def get_unique_timepoints(self, include_zero_timepoints=False):
         """
@@ -101,7 +77,7 @@ class Experiment(object):
         """
         all_timepoints = []
         for measurement in self.measurements:
-            exp_timepoints = self.measurements[measurement]['timepoints']
+            exp_timepoints = measurement.timepoints
             all_timepoints.append(exp_timepoints)
 
         unique_timepoints = np.unique(np.concatenate(all_timepoints))
@@ -111,3 +87,47 @@ class Experiment(object):
         unique_timepoints.sort()
 
         return unique_timepoints
+
+    def get_variable_measurements(self, variable_name):
+        """
+        Returns the measurement object associated with a particular variable
+
+        Raises `KeyError` if there is no measurement of `variable_name`
+
+        Parameters
+        ----------
+        variable_name: string
+            The name of the measured variable
+
+        Returns
+        -------
+        measurement: :class:`~TimecourseMeasurement:SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement`
+            A measurement object
+        """
+        for measurement in self.measurements:
+            if variable_name == measurement.variable_name:
+                return measurement
+        raise KeyError('%s not in measurements' %variable_name)
+
+    def add_measurement(self, measurement):
+        """
+        Adds a measurement to the experiment
+
+        Raises `KeyError` if there is already another timeseries measurement of `variable_name`
+
+        Parameters
+        ----------
+        measurement: measurement: :class:`~TimecourseMeasurement:SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement`
+            A new measurement to add to the experiment
+        """
+        if len(self.measurements) == 0:
+            self.measurements.append(measurement)
+
+        else:
+            for existing_measurement in self.measurements:
+                if measurement.variable_name == existing_measurement.variable_name:
+                    if (type(existing_measurement) and type(measurement)) is TimecourseMeasurement:
+                        raise KeyError('%s already has timeseries data associated with this experiment')
+                    # Two steady state measurements are OK provided they are wrt different parameters.
+            self.measurements.append(measurement)
+

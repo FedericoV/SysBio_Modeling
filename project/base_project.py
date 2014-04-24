@@ -5,11 +5,9 @@ import numpy as np
 import scipy
 
 
-
 ########################################################################################
 # Utility Functions
 ########################################################################################
-
 
 def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
     sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
@@ -58,11 +56,8 @@ class Project(object):
 
         self.model_parameter_settings = model_parameter_settings
         self.measurement_variable_map = measurement_variable_map
-        self.global_param_idx, self.n_global_params, self.residuals_per_param = self._set_local_param_idx()
 
-        # Convenience variables that depend on constructor arguments.
-        self._n_residuals = self._calc__n_residuals()
-        self._measurements_idx = self._set_measurement_idx()
+        self._update_project_settings()
 
         # Misc Constraints
         self._scale_factors_priors = {}
@@ -74,6 +69,32 @@ class Project(object):
         self._scale_factors = None
         self._scale_factors_jacobian = None
         self.global_param_vector = None
+
+    def _update_project_settings(self):
+        self.global_param_idx, self.n_global_params, self._residuals_per_param = self._set_local_param_idx()
+
+        # Convenience variables that depend on constructor arguments.
+        self._n_residuals = self._calc__n_residuals()
+        self._measurements_idx = self._set_measurement_idx()
+
+    def add_experiment(self, experiment):
+        self.experiments.append(experiment)
+
+        # Now we update the project parameter settings.
+        self._update_project_settings()
+
+    def remove_experiment(self, experiment_name):
+        removed_exp_idx = -1
+        for exp_idx, experiment in enumerate(self.experiments):
+            if experiment.name == experiment_name:
+                removed_exp_idx = exp_idx
+                break
+
+        if removed_exp_idx == -1:
+            raise KeyError('%s is not in the list of experiments')
+        else:
+            self.experiments.pop(removed_exp_idx)
+            self._update_project_settings()
 
     def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
         if measure_name not in self.measurement_variable_map:
@@ -102,12 +123,13 @@ class Project(object):
     def _set_measurement_idx(self):
         m_idx = {}
         for i, experiment in enumerate(self.experiments):
-            for measured_var in experiment.measurements:
+            for measurement in experiment.measurements:
+                measured_variable_name = measurement.variable_name
                 try:
-                    m_idx[measured_var].append(i)
+                    m_idx[measured_variable_name].append(i)
                 except KeyError:
-                    m_idx[measured_var] = []
-                    m_idx[measured_var].append(i)
+                    m_idx[measured_variable_name] = []
+                    m_idx[measured_variable_name].append(i)
         return m_idx
 
     def _calc__n_residuals(self, include_zero_timepoints=False):
@@ -116,8 +138,8 @@ class Project(object):
         """
         n_res = 0
         for experiment in self.experiments:
-            for measured_var, measurement in experiment.measurements.items():
-                timepoints = measurement['timepoints']
+            for measurement in experiment.measurements:
+                timepoints = measurement.timepoints
                 if not include_zero_timepoints:
                     timepoints = timepoints[timepoints != 0]
                 n_res += len(timepoints)
@@ -140,11 +162,11 @@ class Project(object):
         global_pars = self.model_parameter_settings.get('Global', [])
         fully_local_pars = self.model_parameter_settings.get('Local', {})
         shared_pars = self.model_parameter_settings.get('Shared', {})
-        fixed_pars = self.model_parameter_settings.get('Fixed', [])
+        project_fixed_pars = self.model_parameter_settings.get('Fixed', [])
 
         global_param_idx = {}
         # This dict maps the location of parameters in the global parameter vector.
-        residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
+        _residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
 
         n_params = 0
         for p in global_pars:
@@ -155,15 +177,28 @@ class Project(object):
         for exp_idx, experiment in enumerate(self.experiments):
             exp_param_idx = OrderedDict()
 
+            try:
+                exp_fixed_pars = experiment.fixed_parameters.keys()
+            except AttributeError:
+                exp_fixed_pars = []
+            all_fixed_pars = project_fixed_pars + exp_fixed_pars
+
+            for p in project_fixed_pars:
+                assert(p in exp_fixed_pars)
+                # If some parameters are marked as globally fixed, each experiment must provide a value.
+
             for p in global_pars:
-                if p not in fixed_pars:
+                if p not in all_fixed_pars:
                     exp_param_idx[p] = global_param_idx[p]['Global']
-                    residuals_per_param[p]['Global'] += len(experiment.get_unique_timepoints())
+                    _residuals_per_param[p]['Global'] += len(experiment.get_unique_timepoints())
                 # Global parameters always refer to the same index in the global parameter vector
 
             for p_group in shared_pars:
                 # Shared parameters depend on the experimental settings.
                 for p, settings in shared_pars[p_group].items():
+                    if p in exp_fixed_pars:
+                        continue  # Experiment over-writes project settings.
+
                     settings = tuple(settings)
 
                     exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
@@ -181,21 +216,19 @@ class Project(object):
                         global_param_idx[p_group][exp_p_settings] = n_params
                         exp_param_idx[p] = n_params
                         n_params += 1
-                    residuals_per_param[p_group][exp_p_settings] += len(experiment.get_unique_timepoints())
+                    _residuals_per_param[p_group][exp_p_settings] += len(experiment.get_unique_timepoints())
 
             for p in fully_local_pars:
+                if p in exp_fixed_pars:
+                    continue  # Experiment over-writes project settings.
                 par_string = '%s_%s' % (p, experiment.name)
                 global_param_idx[par_string]['Local'] = n_params
                 exp_param_idx[p] = n_params
                 n_params += 1
-                residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
-
-            for p in fixed_pars:
-                assert(p in experiment.fixed_parameters)
-                # If some parameters are marked as globally fixed, each experiment must provide a value.
+                _residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
 
             self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
-        return global_param_idx, n_params, residuals_per_param
+        return global_param_idx, n_params, _residuals_per_param
 
     def _sim_experiments(self, exp_subset='all', all_timepoints=False):
         """
@@ -231,11 +264,9 @@ class Project(object):
                     exp_weight = self.experiments_weights[exp_idx]
                 except KeyError:
                     exp_weight = 1
-                measurement = experiment.measurements[measure_name]
-                exp_timepoints = measurement['timepoints']
 
-                exp_data = measurement['value'][exp_timepoints != 0]
-                exp_std = measurement['std_dev'][exp_timepoints != 0]
+                measurement = experiment.get_variable_measurements(measure_name)
+                exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
                 sim_data = self._all_sims[exp_idx][measure_name]['value']
                 _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
@@ -255,18 +286,14 @@ class Project(object):
             sim_dot_exp = np.zeros((1,), dtype='float64')
 
             for exp_idx in experiment_list:
+                experiment = self.experiments[exp_idx]
                 try:
                     exp_weight = self.experiments_weights[exp_idx]
                 except KeyError:
                     exp_weight = 1
-                experiment = self.experiments[exp_idx]
-                measurement = experiment.measurements[measure_name]
-                exp_data = measurement['value']
-                exp_std = measurement['std_dev']
 
-                exp_timepoints = measurement['timepoints']
-                exp_data = exp_data[exp_timepoints != 0]  # Vector
-                exp_std = exp_std[exp_timepoints != 0]  # Vector
+                measurement = experiment.get_variable_measurements(measure_name)
+                exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
                 sim_data = self._all_sims[exp_idx][measure_name]['value']  # Vector
                 model_sens = self._model_jacobian[exp_idx][measure_name]  # Matrix
@@ -289,15 +316,14 @@ class Project(object):
         except KeyError:
             exp_weight = 1
 
-        for measure_name in experiment.measurements:
+        for measurement in experiment.measurements:
+            measure_name = measurement.variable_name
             try:
                 scale = self._scale_factors[measure_name]
             except KeyError:
                 scale = 1
-            measurement = experiment.measurements[measure_name]
-            exp_timepoints = measurement['timepoints']
-            exp_data = measurement['value'][exp_timepoints != 0]
-            exp_std = measurement['std_dev'][exp_timepoints != 0]
+
+            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = self._all_sims[exp_idx][measure_name]['value']
 
             residuals[measure_name] = (sim_data * scale - exp_data) / exp_std
@@ -337,13 +363,24 @@ class Project(object):
                 print '%s  total_settings: %d ' % (p_group, len(exp_settings))
             for exp_set in exp_settings:
                 if verbose:
-                    print '%s, %d \t' % (repr(exp_set), self.residuals_per_param[p_group][exp_set])
+                    print '%s, %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
                 total_params += 1
             if verbose:
                 print '\n***********************'
         if verbose:
             print "Total Parameters: %d" % total_params
         return total_params
+
+    def get_ordered_project_params(self):
+        project_params = []
+        for p_group in self.global_param_idx:
+            exp_settings = self.global_param_idx[p_group].keys()
+            for exp_set in exp_settings:
+                global_idx = self.global_param_idx[p_group][exp_set]
+                global_p_name = p_group + ' ' + ''.join([str(setting) for setting in exp_set])
+                project_params.append((global_p_name, global_idx))
+        project_params.sort(key=lambda x: x[1])
+        return zip(*project_params)[0]
 
     def __call__(self, global_param_vector):
         """
@@ -360,7 +397,7 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        if self.global_param_vector is None or not np.alltrue(global_param_vector == self.global_param_vector):
+        if (self.global_param_vector is None) or (not np.alltrue(global_param_vector == self.global_param_vector)):
             self.reset_calcs()
             self.global_param_vector = np.copy(global_param_vector)
 
@@ -594,11 +631,8 @@ class Project(object):
                     exp_weight = self.experiments_weights[exp_idx]
                 except KeyError:
                     exp_weight = 1
-                measurement = experiment.measurements[measure_name]
-                exp_timepoints = measurement['timepoints']
-
-                exp_data = measurement['value'][exp_timepoints != 0]
-                exp_std = measurement['std_dev'][exp_timepoints != 0]
+                measurement = experiment.get_variable_measurements(measure_name)
+                exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
                 sim_data = self._all_sims[exp_idx][measure_name]['value']
                 _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)

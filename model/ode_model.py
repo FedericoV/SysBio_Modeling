@@ -54,11 +54,12 @@ class OdeModel(ModelABC):
         jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
             transformed_params_deriv = OdeModel.param_transform_derivative(global_param_vector)
-            v_idx = variable_idx[measurement]
+            var_name = measurement.variable_name
+            v_idx = variable_idx[var_name]
             # Mapping between experimental measurement and model variable
             v_0 = v_idx * n_exp_params
 
-            exp_timepoints = experiment.measurements[measurement]['timepoints']
+            _, _, exp_timepoints = measurement.get_nonzero_measurements()
             exp_timepoints = exp_timepoints[exp_timepoints != 0]
             exp_t_idx = np.searchsorted(t_sim, exp_timepoints)
 
@@ -78,7 +79,7 @@ class OdeModel(ModelABC):
                         continue
                         # We don't calculate the jacobian wrt fixed parameters.
                 var_jacobian[:, global_idx] += local_sens[:, p_model_idx]
-            jacobian_dict[measurement] = var_jacobian * transformed_params_deriv
+            jacobian_dict[var_name] = var_jacobian * transformed_params_deriv
 
         return jacobian_dict
 
@@ -191,13 +192,14 @@ class OdeModel(ModelABC):
         y_sim = odeint(func_wrapper, init_conditions, t_sim)
 
         exp_sim = OrderedDict()
-        for measure_name in experiment.measurements:
+        for measurement in experiment.measurements:
+            measure_name = measurement.variable_name
             exp_sim[measure_name] = {}
             v_idx = variable_idx[measure_name]
             measure_sim = y_sim[:, v_idx]
 
             if not all_timepoints:
-                exp_timepoints = experiment.measurements[measure_name]['timepoints']
+                exp_timepoints = measurement.timepoints
                 exp_timepoints = exp_timepoints[exp_timepoints != 0]
                 exp_t_idx = np.searchsorted(t_sim, exp_timepoints)
                 exp_t = np.take(t_sim, exp_t_idx)
