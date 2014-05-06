@@ -9,6 +9,11 @@ import scipy
 ########################################################################################
 # Utility Functions
 ########################################################################################
+def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
+    """Copied from SloppyCell"""
+    B_centered = np.exp(u) * B_best
+    lB = u + log_B_best
+    return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
 
 def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
     sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
@@ -45,18 +50,17 @@ class Project(object):
         Whether or not to jit `sens_model` and `model` using numba
     """
 
-    def __init__(self, model, experiments, model_parameter_settings,
-                 measurement_variable_map):
+    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map):
         self.model = model
         if type(experiments) is not list:
             warnings.warn('Make sure that the iterable passed has a stable iteration order')
 
         self.experiments = experiments
-        self.experiments_weights = [1.0 for experiment in experiments]
+        self.experiments_weights = np.ones((len(experiments),))
         # We expect that we always iterate through experiments in same order.
 
         self.model_parameter_settings = model_parameter_settings
-        self.measurement_variable_map = measurement_variable_map
+        self.measurement_to_model_map = measurement_to_model_map
 
         self._update_project_settings()
 
@@ -75,14 +79,20 @@ class Project(object):
         self.project_param_idx, self.n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
         # Convenience variables that depend on constructor arguments.
-        self._n_residuals = self._calc__n_residuals()
+        self._n_residuals = self._calc_n_residuals()
         self._measurements_idx = self._set_measurement_idx()
 
     def add_experiment(self, experiment):
         self.experiments.append(experiment)
+        self.experiments_weights = np.append(self.experiments_weights, 1)
 
         # Now we update the project parameter settings.
         self._update_project_settings()
+
+    def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
+        if measure_name not in self.measurement_to_model_map:
+            raise KeyError('%s not in project measures' % measure_name)
+        self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
 
     def remove_experiment(self, experiment_name):
         removed_exp_idx = -1
@@ -94,13 +104,9 @@ class Project(object):
         if removed_exp_idx == -1:
             raise KeyError('%s is not in the list of experiments')
         else:
+            self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
             self.experiments.pop(removed_exp_idx)
             self._update_project_settings()
-
-    def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
-        if measure_name not in self.measurement_variable_map:
-            raise KeyError('%s not in project measures' % measure_name)
-        self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
 
     def get_experiment_index(self, exp_name):
         for exp_idx, experiment in enumerate(self.experiments):
@@ -133,7 +139,7 @@ class Project(object):
                     m_idx[measured_variable_name].append(i)
         return m_idx
 
-    def _calc__n_residuals(self, include_zero=False):
+    def _calc_n_residuals(self, include_zero=False):
         """
         Calculates the total number of experimental points across all experiments
         """
@@ -181,6 +187,7 @@ class Project(object):
             try:
                 exp_fixed_pars = experiment.fixed_parameters.keys()
             except AttributeError:
+                # That experiment has no fixed parameters.
                 exp_fixed_pars = []
             all_fixed_pars = project_fixed_pars + exp_fixed_pars
 
@@ -201,7 +208,6 @@ class Project(object):
                         continue  # Experiment over-writes project settings.
 
                     settings = tuple(settings)
-
                     exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
                     # Here we get the experimental conditions for all settings upon which that parameter depends.
 
@@ -246,11 +252,11 @@ class Project(object):
 
         for experiment in exp_subset:
             exp_sim = self.model.simulate_experiment(self.project_param_vector, experiment,
-                                                     self.measurement_variable_map, all_timepoints)
+                                                     self.measurement_to_model_map, all_timepoints)
             _all_sims.append(exp_sim)
         self._all_sims = _all_sims
 
-    def _calc__scale_factors(self):
+    def _calc_scale_factors(self):
         """
         Analytically calculates the optimal scale factor for measurements that are in arbitrary units
         """
@@ -261,10 +267,7 @@ class Project(object):
 
             for exp_idx in experiment_list:
                 experiment = self.experiments[exp_idx]
-                try:
-                    exp_weight = self.experiments_weights[exp_idx]
-                except KeyError:
-                    exp_weight = 1
+                exp_weight = self.experiments_weights[exp_idx]
 
                 measurement = experiment.get_variable_measurements(measure_name)
                 exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
@@ -274,7 +277,7 @@ class Project(object):
 
             self._scale_factors[measure_name] = sim_dot_exp / sim_dot_sim
 
-    def _calc__scale_factors_jacobian(self):
+    def _calc_scale_factors_jacobian(self):
         """
         Analytically calculates the jacobian of the scale factors for each measurement
         """
@@ -288,10 +291,7 @@ class Project(object):
 
             for exp_idx in experiment_list:
                 experiment = self.experiments[exp_idx]
-                try:
-                    exp_weight = self.experiments_weights[exp_idx]
-                except KeyError:
-                    exp_weight = 1
+                exp_weight = self.experiments_weights[exp_idx]
 
                 measurement = experiment.get_variable_measurements(measure_name)
                 exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
@@ -312,17 +312,10 @@ class Project(object):
         residuals = OrderedDict()
         experiment = self.experiments[exp_idx]
 
-        try:
-            exp_weight = self.experiments_weights[exp_idx]
-        except KeyError:
-            exp_weight = 1
-
+        exp_weight = self.experiments_weights[exp_idx]
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
-            try:
-                scale = self._scale_factors[measure_name]
-            except KeyError:
-                scale = 1
+            scale = self._scale_factors[measure_name]
 
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = self._all_sims[exp_idx][measure_name]['value']
@@ -341,13 +334,13 @@ class Project(object):
             _all_residuals.append(exp_res)
         self._all_residuals = _all_residuals
 
-    def _calc__model_jacobian(self):
+    def _calc_model_jacobian(self):
         all_jacobians = []
         for experiment in self.experiments:
             if self.project_param_vector is None:
                 raise ValueError('Parameter vector not set')
             exp_jacobian = self.model.calc_jacobian(self.project_param_vector,
-                                                    experiment, self.measurement_variable_map)
+                                                    experiment, self.measurement_to_model_map)
             all_jacobians.append(exp_jacobian)
         self._model_jacobian = all_jacobians
 
@@ -403,7 +396,7 @@ class Project(object):
             self.project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
-            self._calc__scale_factors()
+            self._calc_scale_factors()
             self._calc_residuals()
 
         residual_array = np.zeros((self._n_residuals,))
@@ -452,17 +445,17 @@ class Project(object):
             self.project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
-            self._calc__scale_factors()
+            self._calc_scale_factors()
             self._calc_residuals()
 
-            self._calc__model_jacobian()
-            self._calc__scale_factors_jacobian()
+            self._calc_model_jacobian()
+            self._calc_scale_factors_jacobian()
 
         elif self._model_jacobian is None:
-            self._calc__model_jacobian()
+            self._calc_model_jacobian()
 
         elif self._scale_factors_jacobian is None:
-            self._calc__scale_factors_jacobian()
+            self._calc_scale_factors_jacobian()
 
         jacobian_array = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
@@ -622,34 +615,25 @@ class Project(object):
             return 0
 
         log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
-        for measure_name, experiment_list in self._measurements_idx.items():
+        for  experiment_list in self._measurements_idx[measure_name]:
             sim_dot_exp = np.zeros((1,), dtype='float64')
             sim_dot_sim = np.zeros((1,), dtype='float64')
 
             for exp_idx in experiment_list:
                 experiment = self.experiments[exp_idx]
-                try:
-                    exp_weight = self.experiments_weights[exp_idx]
-                except KeyError:
-                    exp_weight = 1
+                exp_weight = self.experiments_weights[exp_idx]
                 measurement = experiment.get_variable_measurements(measure_name)
                 exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
                 sim_data = self._all_sims[exp_idx][measure_name]['value']
                 _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
 
-        def integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
-            """Copied from SloppyCell"""
-            B_centered = np.exp(u) * B_best
-            lB = u + log_B_best
-            return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
-
         optimal_scale_factor = sim_dot_exp / sim_dot_sim
         log_optimal_scale_factor = np.log(optimal_scale_factor)
 
         integral_args = (sim_dot_sim, sim_dot_exp, log_scale_factor_prior, log_sigma_scale_factor, temperature,
                          optimal_scale_factor, log_optimal_scale_factor)
-        ans, temp = scipy.integrate.quad(integrand, -scipy.inf, scipy.inf, args=integral_args, limit=1000)
+        ans, temp = scipy.integrate.quad(_entropy_integrand, -scipy.inf, scipy.inf, args=integral_args, limit=1000)
 
         entropy = np.log(ans)
         return entropy
@@ -672,7 +656,7 @@ class Project(object):
             The sum of the entropy of all scale factors in the model
         """
         entropy = 0
-        for measure_name in self.measurement_variable_map:
+        for measure_name in self.measurement_to_model_map:
             entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
         return entropy
 

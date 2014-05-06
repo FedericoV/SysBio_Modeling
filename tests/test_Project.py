@@ -58,8 +58,8 @@ class TestProject(TestCase):
         n_vars = 1
         cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
 
-        measurement_variable_map = {'Variable_1': 0}
-        proj = Project(cls.ode_model, experiments, experiment_settings, measurement_variable_map)
+        measurement_to_model_map = {'Variable_1': 0}
+        proj = Project(cls.ode_model, experiments, experiment_settings, measurement_to_model_map)
         cls.proj = proj
 
         project_param_vector = np.zeros((3,))
@@ -227,9 +227,6 @@ class TestProject(TestCase):
 
         out = geo_leastsq(proj, base_guess, Dfun=proj.calc_project_jacobian)
 
-    def test_experiment_settings(self):
-        raise AssertionError('Not Implemented Yet')
-
     @raises(KeyError)
     def test_remove_absent_experiment(self):
         proj = TestProject.proj
@@ -263,6 +260,18 @@ class TestProject(TestCase):
             if experiment.name == 'Simple_Experiment':
                 present = 1
 
+        n_experiments = len(proj.experiments)
+        n_experiment_weights = len(proj.experiments_weights)
+
+        if n_experiments != n_experiment_weights:
+            raise AssertionError('Weight vector not updated properly')
+
         if present == 1:
             raise AssertionError('Unable to remove experiment from project')
+
+    def test_experiment_weights(self):
+        raise AssertionError('Not Implemented Yet')
+
+    def test_experiment_settings(self):
+        raise AssertionError('Not Implemented Yet')
 
