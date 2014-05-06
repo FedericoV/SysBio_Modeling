@@ -1,4 +1,5 @@
 import numpy as np
+
 from measurement import TimecourseMeasurement
 
 
@@ -61,13 +62,13 @@ class Experiment(object):
             if (variable is None) or (measurement_variable == variable):
                 self.measurements[measure_idx].drop_timepoint_zero()
 
-    def get_unique_timepoints(self, include_zero_timepoints=False):
+    def get_unique_timepoints(self, include_zero=False):
         """
         Returns the union of all timepoints across all the measurements in the experiment.
 
         Parameters
         ----------
-        include_zero_timepoints: bool, optional
+        include_zero: bool, optional
             Whether to return the zero timepoint measurements.
 
         Returns
@@ -81,7 +82,7 @@ class Experiment(object):
             all_timepoints.append(exp_timepoints)
 
         unique_timepoints = np.unique(np.concatenate(all_timepoints))
-        if not include_zero_timepoints:
+        if not include_zero:
             unique_timepoints = unique_timepoints[unique_timepoints != 0]
 
         unique_timepoints.sort()

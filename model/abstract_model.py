@@ -10,7 +10,7 @@ class ModelABC(object):
         self._n_vars = n_vars
 
     @abstractmethod
-    def simulate_experiment(self, global_param_vector, t_sim, experiment):
+    def simulate_experiment(self, project_param_vector, t_sim, experiment):
         return NotImplementedError
 
     def get_n_vars(self):

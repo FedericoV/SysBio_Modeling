@@ -43,12 +43,12 @@ class p53_assimulo_sim(Explicit_Problem):
             p_idx[p_idx_local] = p_idx_global
         return p_idx
 
-    def get_param_vector(self, p53_exp, global_param_vector):
+    def get_param_vector(self, p53_exp, project_param_vector):
 
         p_idx = self.get_param_vector_idx(p53_exp)
         p = []
         for model_idx in p_idx:
-            p.append(global_param_vector[model_idx])
+            p.append(project_param_vector[model_idx])
         p = np.array(p)
         return p
 
@@ -82,12 +82,11 @@ def make_assimulo_fcn(assi_sim, experiments, n_vars=6, t_max=32400,
                       verbose=True, std_normalization=False,
                       mean_normalization=False, return_grad_as_tuple=False,
                       scaled_model=False):
-
-    def assi_fitting_fcn(global_param_vector, grad=None):
+    def assi_fitting_fcn(project_param_vector, grad=None):
         residuals = np.array([])
 
         if return_grad_as_tuple:
-            grad = np.zeros_like(global_param_vector)
+            grad = np.zeros_like(project_param_vector)
         if grad.size > 0:
             grad[:] = 0.0
 
@@ -98,7 +97,7 @@ def make_assimulo_fcn(assi_sim, experiments, n_vars=6, t_max=32400,
 
             try:
                 t_sim, y_sim, exp_sens = p53_exp.simulate_assimulo_model(
-                    assi_sim, global_param_vector, init_conditions,
+                    assi_sim, project_param_vector, init_conditions,
                     scaled_model=scaled_model)
 
                 exp_res = p53_exp.residuals(t_sim, y_sim[:, -1],
@@ -106,7 +105,6 @@ def make_assimulo_fcn(assi_sim, experiments, n_vars=6, t_max=32400,
                                             mean_normalization=mean_normalization)
 
                 if grad.size > 0:
-
                     grad_t = (exp_res * exp_sens.T)
                     grad[:] += np.sum(grad_t, axis=1)
 
@@ -119,12 +117,12 @@ def make_assimulo_fcn(assi_sim, experiments, n_vars=6, t_max=32400,
             residuals = np.hstack([residuals, exp_res])
 
         grad[:] /= total_exp_points
-        rss = np.sum(residuals**2)  # L2 loss
+        rss = np.sum(residuals ** 2)  # L2 loss
 
         if verbose:
             print "RSS: %s" % rss
             print "Gradient: %s" % grad
-            print "Parameter Vector: %s" % global_param_vector
+            print "Parameter Vector: %s" % project_param_vector
             print "\n\n"
         if return_grad_as_tuple:
             return rss, grad
@@ -134,54 +132,53 @@ def make_assimulo_fcn(assi_sim, experiments, n_vars=6, t_max=32400,
     return assi_fitting_fcn
 
 
+def simulate_assimulo_model(self, assi_sim, project_param_vector,
+                            init_conditions=np.zeros(6, ),
+                            t_sim=None, calculate_sensitivity=True,
+                            scaled_model=False):
+    '''t_sim there for compatibility, doesn't do anything'''
 
-def simulate_assimulo_model(self, assi_sim, global_param_vector,
-                                init_conditions=np.zeros(6,),
-                                t_sim=None, calculate_sensitivity=True,
-                                scaled_model=False):
-        '''t_sim there for compatibility, doesn't do anything'''
+    # Sets empty, gal concentration, etc.
+    assi_sim.reset()
+    assi_sim.problem.conditions = self.conditions
+    p = assi_sim.problem.get_param_vector(self, project_param_vector)
 
-        # Sets empty, gal concentration, etc.
-        assi_sim.reset()
-        assi_sim.problem.conditions = self.conditions
-        p = assi_sim.problem.get_param_vector(self, global_param_vector)
+    assi_sim.p = p
+    assi_sim.pbar = np.ones_like(p)
 
-        assi_sim.p = p
-        assi_sim.pbar = np.ones_like(p)
+    endpoint = self.timepoints[-1]
 
-        endpoint = self.timepoints[-1]
+    if scaled_model:
+        k_deg_p53 = np.log(2) / (3600 * 6)
+        RE_total = 0.0005725
+        endpoint = endpoint * k_deg_p53
 
-        if scaled_model:
-            k_deg_p53 = np.log(2) / (3600*6)
-            RE_total = 0.0005725
-            endpoint = endpoint * k_deg_p53
+    if not calculate_sensitivity:
+        (t_sim, assi_y) = assi_sim.simulate(endpoint)
+        return (t_sim, assi_y)
 
-        if not calculate_sensitivity:
-            (t_sim, assi_y) = assi_sim.simulate(endpoint)
-            return (t_sim, assi_y)
+    t_sim, assi_y = assi_sim.simulate(endpoint, ncp=1000)
 
-        t_sim, assi_y = assi_sim.simulate(endpoint, ncp=1000)
+    if scaled_model:
+        t_sim = t_sim / k_deg_p53
+        assi_y = assi_y * RE_total
 
-        if scaled_model:
-            t_sim = t_sim / k_deg_p53
-            assi_y = assi_y * RE_total
+    t_idx = np.searchsorted(t_sim, self.timepoints[self.timepoints != 0])
+    # We ignore sensitivity for point 0
 
-        t_idx = np.searchsorted(t_sim, self.timepoints[self.timepoints != 0])
-        # We ignore sensitivity for point 0
+    glob_sens = np.zeros((len(t_idx), len(project_param_vector)))
 
-        glob_sens = np.zeros((len(t_idx), len(global_param_vector)))
+    param_sens = np.array(assi_sim.p_sol)
+    # sensitivity is with respect to the parameters INSIDE the model.
+    # A parameter in the project_param_vector can be used twice inside
+    # the model - so need to average out the two sensitivities.
+    p_idx = assi_sim.problem.get_param_vector_idx(self)
+    # p_idx is a vector that tells you where the ith parameter of
+    # the model is in the project_parameter_vector - so p[i] = j
+    # means that the ith model parameter is in the jth position
+    # of project_param_vector.
 
-        param_sens = np.array(assi_sim.p_sol)
-        # sensitivity is with respect to the parameters INSIDE the model.
-        # A parameter in the global_param_vector can be used twice inside
-        # the model - so need to average out the two sensitivities.
-        p_idx = assi_sim.problem.get_param_vector_idx(self)
-        # p_idx is a vector that tells you where the ith parameter of
-        # the model is in the global_parameter_vector - so p[i] = j
-        # means that the ith model parameter is in the jth position
-        # of global_param_vector.
+    for l_idx, g_idx in enumerate(p_idx):
+        glob_sens[:, g_idx] += param_sens[l_idx, t_idx, -1]
 
-        for l_idx, g_idx in enumerate(p_idx):
-            glob_sens[:, g_idx] += param_sens[l_idx, t_idx, -1]
-
-        return (t_sim, assi_y, glob_sens)
+    return (t_sim, assi_y, glob_sens)

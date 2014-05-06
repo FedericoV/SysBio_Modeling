@@ -19,7 +19,7 @@ __author__ = 'Federico Vaggi'
 def _simple_model_analytical_jac(k_deg, k_synt, t):
     k_synt_jac = k_synt * (1 / k_deg - np.exp(-k_deg * t) / k_deg)
     k_deg_jac = k_deg * (
-    k_synt * t * np.exp(-k_deg * t) / k_deg - k_synt / k_deg ** 2 + k_synt * np.exp(-k_deg * t) / k_deg ** 2)
+        k_synt * t * np.exp(-k_deg * t) / k_deg - k_synt / k_deg ** 2 + k_synt * np.exp(-k_deg * t) / k_deg ** 2)
     return np.vstack((k_deg_jac, k_synt_jac))
 
 
@@ -36,11 +36,11 @@ class TestProject(TestCase):
         low_deg = Experiment('Low_Deg_Exp', measurement_1, experiment_settings=exp_settings)
 
         exp_timepoints_2 = np.array([5.05050505, 9.09090909, 12.12121212, 16.16161616, 19.19191919,
-                                   23.23232323, 26.26262626, 30.3030303, 33.33333333, 37.37373737,
-                                   40.4040404, 44.44444444, 47.47474747, 50.50505051, 54.54545455,
-                                   57.57575758, 61.61616162, 64.64646465, 68.68686869, 71.71717172,
-                                   75.75757576, 78.78787879, 82.82828283, 85.85858586, 89.8989899,
-                                   92.92929293])
+                                     23.23232323, 26.26262626, 30.3030303, 33.33333333, 37.37373737,
+                                     40.4040404, 44.44444444, 47.47474747, 50.50505051, 54.54545455,
+                                     57.57575758, 61.61616162, 64.64646465, 68.68686869, 71.71717172,
+                                     75.75757576, 78.78787879, 82.82828283, 85.85858586, 89.8989899,
+                                     92.92929293])
 
         high_deg_measures = np.array([0.04925086, 0.08689927, 0.11415396, 0.14923229, 0.17462643, 0.20731014,
                                       0.23097075, 0.26142329, 0.28346868, 0.31184237, 0.33238284, 0.3588196,
@@ -62,29 +62,29 @@ class TestProject(TestCase):
         proj = Project(cls.ode_model, experiments, experiment_settings, measurement_variable_map)
         cls.proj = proj
 
-        global_param_vector = np.zeros((3,))
-        low_deg_idx = proj.global_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj.global_param_idx['Group_1'][('High',)]
-        synt_idx = proj.global_param_idx['k_synt']['Global']
+        project_param_vector = np.zeros((3,))
+        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
+        synt_idx = proj.project_param_idx['k_synt']['Global']
 
-        global_param_vector[high_deg_idx] = 0.01
-        global_param_vector[low_deg_idx] = 0.001
-        global_param_vector[synt_idx] = 0.01
+        project_param_vector[high_deg_idx] = 0.01
+        project_param_vector[low_deg_idx] = 0.001
+        project_param_vector[synt_idx] = 0.01
 
-        log_global_param_vector = np.log(global_param_vector)
-        cls.log_global_param_vector = log_global_param_vector
+        log_project_param_vector = np.log(project_param_vector)
+        cls.log_project_param_vector = log_project_param_vector
 
     def test__project_initialization(self):
         proj = TestProject.proj
         assert (0 in proj._measurements_idx['Variable_1'])
         assert (1 in proj._measurements_idx['Variable_1'])
-        global_param_idx = proj.global_param_idx
-        assert (global_param_idx['k_synt'].keys() == ['Global'])
-        assert (len(global_param_idx['Group_1'].keys()) == 2)  # Two settings for k_deg
+        project_param_idx = proj.project_param_idx
+        assert (project_param_idx['k_synt'].keys() == ['Global'])
+        assert (len(project_param_idx['Group_1'].keys()) == 2)  # Two settings for k_deg
 
         for exp in proj.experiments:
             setting = exp.settings['Deg_Rate']
-            assert (global_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
+            assert (project_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
             # Check parameters are set properly
 
         assert (proj._n_residuals == 35)
@@ -96,8 +96,8 @@ class TestProject(TestCase):
 
     def test_sim_experiments(self):
         proj = TestProject.proj
-        log_global_param_vector = TestProject.log_global_param_vector
-        proj(log_global_param_vector)
+        log_project_param_vector = TestProject.log_project_param_vector
+        proj(log_project_param_vector)
         assert (len(proj._all_sims) == 2)
 
         for exp_idx, experiment in enumerate(proj.experiments):
@@ -120,16 +120,16 @@ class TestProject(TestCase):
 
     def test_model_jacobian(self):
         proj = TestProject.proj
-        log_global_param_vector = TestProject.log_global_param_vector
-        global_param_vector = np.exp(log_global_param_vector)
-        proj.calc_project_jacobian(log_global_param_vector)
+        log_project_param_vector = TestProject.log_project_param_vector
+        project_param_vector = np.exp(log_project_param_vector)
+        proj.calc_project_jacobian(log_project_param_vector)
 
         for exp_idx, jac_block in enumerate(proj._model_jacobian):
             experiment = proj.experiments[exp_idx]
             k_synt_idx = experiment.param_global_vector_idx['k_synt']
             k_deg_idx = experiment.param_global_vector_idx['k_deg']
-            k_synt = global_param_vector[k_synt_idx]
-            k_deg = global_param_vector[k_deg_idx]
+            k_synt = project_param_vector[k_synt_idx]
+            k_deg = project_param_vector[k_deg_idx]
             exp_t = experiment.get_variable_measurements('Variable_1').timepoints
             exp_t = exp_t[exp_t != 0]
 
@@ -145,31 +145,31 @@ class TestProject(TestCase):
 
     def test_scale_factor_jacobian(self):
         proj = TestProject.proj
-        log_global_param_vector = TestProject.log_global_param_vector
-        proj.calc_project_jacobian(log_global_param_vector)
+        log_project_param_vector = TestProject.log_project_param_vector
+        proj.calc_project_jacobian(log_project_param_vector)
         _scale_factors_jacobian = proj._scale_factors_jacobian['Variable_1']
 
         def get_scale_factors(x):
             proj(x)
             return proj._scale_factors['Variable_1']
 
-        num_scale_factors = approx_fprime(log_global_param_vector, get_scale_factors, centered=True)
+        num_scale_factors = approx_fprime(log_project_param_vector, get_scale_factors, centered=True)
         assert np.allclose(_scale_factors_jacobian, num_scale_factors, rtol=0.01)
 
     def test_calc_project_jacobian(self):
         # Known test failure.  Most likely due to numerical failures in scaling factor.
         proj = TestProject.proj
-        global_param_vector = np.zeros((3,))
-        low_deg_idx = proj.global_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj.global_param_idx['Group_1'][('High',)]
-        synt_idx = proj.global_param_idx['k_synt']['Global']
+        project_param_vector = np.zeros((3,))
+        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
+        synt_idx = proj.project_param_idx['k_synt']['Global']
 
-        global_param_vector[high_deg_idx] = 0.01
-        global_param_vector[low_deg_idx] = 0.001
-        global_param_vector[synt_idx] = 0.01
-        log_global_param_vector = np.log(global_param_vector)
+        project_param_vector[high_deg_idx] = 0.01
+        project_param_vector[low_deg_idx] = 0.001
+        project_param_vector[synt_idx] = 0.01
+        log_project_param_vector = np.log(project_param_vector)
 
-        sens_jacobian = proj.calc_project_jacobian(log_global_param_vector)
+        sens_jacobian = proj.calc_project_jacobian(log_project_param_vector)
 
         def get_scaled_sims(x):
             proj(x)
@@ -181,36 +181,36 @@ class TestProject(TestCase):
             scale = proj._scale_factors['Variable_1']
             return sims * scale
 
-        num_global_jac = approx_fprime(log_global_param_vector, get_scaled_sims, centered=True)
+        num_global_jac = approx_fprime(log_project_param_vector, get_scaled_sims, centered=True)
         assert (np.sum((num_global_jac - sens_jacobian) ** 2) < 1e-8)
 
-        global_param_vector[high_deg_idx] = 0.02
-        global_param_vector[low_deg_idx] = 0.003
-        global_param_vector[synt_idx] = 0.05
-        log_global_param_vector = np.log(global_param_vector)
+        project_param_vector[high_deg_idx] = 0.02
+        project_param_vector[low_deg_idx] = 0.003
+        project_param_vector[synt_idx] = 0.05
+        log_project_param_vector = np.log(project_param_vector)
 
-        sens_rss_jac = proj.calc_rss_gradient(log_global_param_vector)
-        num_rss_jac = approx_fprime(log_global_param_vector, proj.calc_sum_square_residuals, centered=True)
+        sens_rss_jac = proj.calc_rss_gradient(log_project_param_vector)
+        num_rss_jac = approx_fprime(log_project_param_vector, proj.calc_sum_square_residuals, centered=True)
         assert np.allclose(sens_rss_jac, num_rss_jac, atol=0.000001)
 
 
     @raises(AssertionError)
     def test_scale_factors_change(self):
         proj = TestProject.proj
-        global_param_vector = np.zeros((3,))
-        low_deg_idx = proj.global_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj.global_param_idx['Group_1'][('High',)]
-        synt_idx = proj.global_param_idx['k_synt']['Global']
+        project_param_vector = np.zeros((3,))
+        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
+        synt_idx = proj.project_param_idx['k_synt']['Global']
 
-        global_param_vector[high_deg_idx] = 0.01
-        global_param_vector[low_deg_idx] = 0.001
-        global_param_vector[synt_idx] = 0.01
+        project_param_vector[high_deg_idx] = 0.01
+        project_param_vector[low_deg_idx] = 0.001
+        project_param_vector[synt_idx] = 0.01
 
-        log_global_param_vector = np.log(global_param_vector)
-        mod_param_vector = np.copy(log_global_param_vector)
+        log_project_param_vector = np.log(project_param_vector)
+        mod_param_vector = np.copy(log_project_param_vector)
         mod_param_vector[0] += 0.2
 
-        proj(log_global_param_vector)
+        proj(log_project_param_vector)
         old_scale_factor = proj._scale_factors['Variable_1'].copy()
         # Changing param vector:
         proj(mod_param_vector)
@@ -223,7 +223,7 @@ class TestProject(TestCase):
         # Known test failure.  Most likely due to numerical failures in scaling factor.
         proj = TestProject.proj
 
-        base_guess = np.log(np.ones((3,))*0.01)
+        base_guess = np.log(np.ones((3,)) * 0.01)
 
         out = geo_leastsq(proj, base_guess, Dfun=proj.calc_project_jacobian)
 
@@ -238,11 +238,11 @@ class TestProject(TestCase):
     def test_add_experiment(self):
         proj = TestProject.proj
 
-        exp_timepoints = np.array([0.         ,  11.11111111,   22.22222222,   33.33333333,
-                                   44.44444444,  55.55555556,   66.66666667,   77.77777778,
-                                   88.88888889,  100.])
-        exp_measures = np.array([0.74524402,  1.53583955,  2.52502335,  3.92107899,  4.58210253,
-                                 5.45036258,  7.03185055,  7.75907324,  9.30805318,  9.751119])
+        exp_timepoints = np.array([0., 11.11111111, 22.22222222, 33.33333333,
+                                   44.44444444, 55.55555556, 66.66666667, 77.77777778,
+                                   88.88888889, 100.])
+        exp_measures = np.array([0.74524402, 1.53583955, 2.52502335, 3.92107899, 4.58210253,
+                                 5.45036258, 7.03185055, 7.75907324, 9.30805318, 9.751119])
         simple_measure = TimecourseMeasurement('Variable_1', np.log(exp_measures), exp_timepoints)
 
         exp_settings_3 = {'Deg_Rate': 'High'}

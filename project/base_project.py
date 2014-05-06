@@ -5,6 +5,7 @@ import numpy as np
 import scipy
 
 
+
 ########################################################################################
 # Utility Functions
 ########################################################################################
@@ -68,10 +69,10 @@ class Project(object):
         self._model_jacobian = None
         self._scale_factors = None
         self._scale_factors_jacobian = None
-        self.global_param_vector = None
+        self.project_param_vector = None
 
     def _update_project_settings(self):
-        self.global_param_idx, self.n_global_params, self._residuals_per_param = self._set_local_param_idx()
+        self.project_param_idx, self.n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
         # Convenience variables that depend on constructor arguments.
         self._n_residuals = self._calc__n_residuals()
@@ -118,7 +119,7 @@ class Project(object):
         self._model_jacobian = None
         self._scale_factors = None
         self._scale_factors_jacobian = None
-        self.global_param_vector = None
+        self.project_param_vector = None
 
     def _set_measurement_idx(self):
         m_idx = {}
@@ -132,7 +133,7 @@ class Project(object):
                     m_idx[measured_variable_name].append(i)
         return m_idx
 
-    def _calc__n_residuals(self, include_zero_timepoints=False):
+    def _calc__n_residuals(self, include_zero=False):
         """
         Calculates the total number of experimental points across all experiments
         """
@@ -140,7 +141,7 @@ class Project(object):
         for experiment in self.experiments:
             for measurement in experiment.measurements:
                 timepoints = measurement.timepoints
-                if not include_zero_timepoints:
+                if not include_zero:
                     timepoints = timepoints[timepoints != 0]
                 n_res += len(timepoints)
         return n_res
@@ -160,18 +161,18 @@ class Project(object):
         """
 
         global_pars = self.model_parameter_settings.get('Global', [])
-        fully_local_pars = self.model_parameter_settings.get('Local', {})
-        shared_pars = self.model_parameter_settings.get('Shared', {})
+        local_pars = self.model_parameter_settings.get('Local', [])
         project_fixed_pars = self.model_parameter_settings.get('Fixed', [])
+        shared_pars = self.model_parameter_settings.get('Shared', {})
 
-        global_param_idx = {}
+        project_param_idx = {}
         # This dict maps the location of parameters in the global parameter vector.
-        _residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
+        residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
 
         n_params = 0
         for p in global_pars:
-            global_param_idx[p] = {}
-            global_param_idx[p]['Global'] = n_params
+            project_param_idx[p] = {}
+            project_param_idx[p]['Global'] = n_params
             n_params += 1
 
         for exp_idx, experiment in enumerate(self.experiments):
@@ -189,9 +190,9 @@ class Project(object):
 
             for p in global_pars:
                 if p not in all_fixed_pars:
-                    exp_param_idx[p] = global_param_idx[p]['Global']
-                    _residuals_per_param[p]['Global'] += len(experiment.get_unique_timepoints())
-                # Global parameters always refer to the same index in the global parameter vector
+                    exp_param_idx[p] = project_param_idx[p]['Global']
+                    residuals_per_param[p]['Global'] += len(experiment.get_unique_timepoints())
+                    # Global parameters always refer to the same index in the global parameter vector
 
             for p_group in shared_pars:
                 # Shared parameters depend on the experimental settings.
@@ -204,38 +205,38 @@ class Project(object):
                     exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
                     # Here we get the experimental conditions for all settings upon which that parameter depends.
 
-                    if p_group not in global_param_idx:
-                        global_param_idx[p_group] = {}
+                    if p_group not in project_param_idx:
+                        project_param_idx[p_group] = {}
                     # If it's the first time we encounter that parameter group, create it.
 
                     try:
-                        exp_param_idx[p] = global_param_idx[p_group][exp_p_settings]
+                        exp_param_idx[p] = project_param_idx[p_group][exp_p_settings]
                         # If we already have another parameter in that parameter group and with those same
                         # experimental settings, then they point to the same location.
                     except KeyError:
-                        global_param_idx[p_group][exp_p_settings] = n_params
+                        project_param_idx[p_group][exp_p_settings] = n_params
                         exp_param_idx[p] = n_params
                         n_params += 1
-                    _residuals_per_param[p_group][exp_p_settings] += len(experiment.get_unique_timepoints())
+                    residuals_per_param[p_group][exp_p_settings] += len(experiment.get_unique_timepoints())
 
-            for p in fully_local_pars:
+            for p in local_pars:
                 if p in exp_fixed_pars:
                     continue  # Experiment over-writes project settings.
                 par_string = '%s_%s' % (p, experiment.name)
-                global_param_idx[par_string]['Local'] = n_params
+                project_param_idx[par_string]['Local'] = n_params
                 exp_param_idx[p] = n_params
                 n_params += 1
-                _residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
+                residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
 
             self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
-        return global_param_idx, n_params, _residuals_per_param
+        return project_param_idx, n_params, residuals_per_param
 
     def _sim_experiments(self, exp_subset='all', all_timepoints=False):
         """
         Simulates all the experiments in the project.
         """
 
-        if self.global_param_vector is None:
+        if self.project_param_vector is None:
             raise ValueError('Parameter vector not set')
         _all_sims = []
         if exp_subset is 'all':
@@ -244,7 +245,7 @@ class Project(object):
             exp_subset = self.experiments[exp_subset]
 
         for experiment in exp_subset:
-            exp_sim = self.model.simulate_experiment(self.global_param_vector, experiment,
+            exp_sim = self.model.simulate_experiment(self.project_param_vector, experiment,
                                                      self.measurement_variable_map, all_timepoints)
             _all_sims.append(exp_sim)
         self._all_sims = _all_sims
@@ -278,7 +279,7 @@ class Project(object):
         Analytically calculates the jacobian of the scale factors for each measurement
         """
         self._scale_factors_jacobian = {}
-        n_global_pars = len(self.global_param_vector)
+        n_global_pars = len(self.project_param_vector)
         for measure_name, experiment_list in self._measurements_idx.items():
             sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
             sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
@@ -343,9 +344,9 @@ class Project(object):
     def _calc__model_jacobian(self):
         all_jacobians = []
         for experiment in self.experiments:
-            if self.global_param_vector is None:
+            if self.project_param_vector is None:
                 raise ValueError('Parameter vector not set')
-            exp_jacobian = self.model.calc_jacobian(self.global_param_vector,
+            exp_jacobian = self.model.calc_jacobian(self.project_param_vector,
                                                     experiment, self.measurement_variable_map)
             all_jacobians.append(exp_jacobian)
         self._model_jacobian = all_jacobians
@@ -356,8 +357,8 @@ class Project(object):
         """
 
         total_params = 0
-        for p_group in self.global_param_idx:
-            exp_settings = self.global_param_idx[p_group].keys()
+        for p_group in self.project_param_idx:
+            exp_settings = self.project_param_idx[p_group].keys()
             exp_settings = sorted(exp_settings)
             if verbose:
                 print '%s  total_settings: %d ' % (p_group, len(exp_settings))
@@ -373,23 +374,23 @@ class Project(object):
 
     def get_ordered_project_params(self):
         project_params = []
-        for p_group in self.global_param_idx:
-            exp_settings = self.global_param_idx[p_group].keys()
+        for p_group in self.project_param_idx:
+            exp_settings = self.project_param_idx[p_group].keys()
             for exp_set in exp_settings:
-                global_idx = self.global_param_idx[p_group][exp_set]
+                global_idx = self.project_param_idx[p_group][exp_set]
                 global_p_name = p_group + ' ' + ''.join([str(setting) for setting in exp_set])
                 project_params.append((global_p_name, global_idx))
         project_params.sort(key=lambda x: x[1])
         return zip(*project_params)[0]
 
-    def __call__(self, global_param_vector):
+    def __call__(self, project_param_vector):
         """
         Calculates the residuals between the simulated values (after optimal scaling) and the experimental values
         across all experiments in the project.  Note about order.
 
         Parameters
         ----------
-        global_param_vector: :class:`~numpy:numpy.ndarray`
+        project_param_vector: :class:`~numpy:numpy.ndarray`
             An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
@@ -397,9 +398,9 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        if (self.global_param_vector is None) or (not np.alltrue(global_param_vector == self.global_param_vector)):
+        if (self.project_param_vector is None) or (not np.alltrue(project_param_vector == self.project_param_vector)):
             self.reset_calcs()
-            self.global_param_vector = np.copy(global_param_vector)
+            self.project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
             self._calc__scale_factors()
@@ -413,7 +414,7 @@ class Project(object):
                 res_idx += len(res_block)
         return residual_array
 
-    def calc_project_jacobian(self, global_param_vector, include_scale_factors=True):
+    def calc_project_jacobian(self, project_param_vector, include_scale_factors=True):
         """
         Given a cost function:
 
@@ -434,7 +435,7 @@ class Project(object):
 
         Parameters
         ----------
-        global_param_vector: :class:`~numpy:numpy.ndarray`
+        project_param_vector: :class:`~numpy:numpy.ndarray`
             An (n,) dimensional array containing the parameters being optimized in the project
 
         include_scale_factors: bool, optional
@@ -446,9 +447,9 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
-        if self.global_param_vector is None or not np.alltrue(global_param_vector == self.global_param_vector):
+        if self.project_param_vector is None or not np.alltrue(project_param_vector == self.project_param_vector):
             self.reset_calcs()
-            self.global_param_vector = np.copy(global_param_vector)
+            self.project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
             self._calc__scale_factors()
@@ -463,7 +464,7 @@ class Project(object):
         elif self._scale_factors_jacobian is None:
             self._calc__scale_factors_jacobian()
 
-        jacobian_array = np.zeros((self._n_residuals, len(global_param_vector)))
+        jacobian_array = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
         for exp_jac, exp_sim in zip(self._model_jacobian, self._all_sims):
             for measure in exp_jac:
@@ -481,7 +482,7 @@ class Project(object):
 
         return jacobian_array
 
-    def calc_rss_gradient(self, global_param_vector):
+    def calc_rss_gradient(self, project_param_vector):
         """
         Returns the gradient of the cost function (the residual sum of squares).
 
@@ -497,7 +498,7 @@ class Project(object):
 
         Parameters
         ----------
-        global_param_vector: :class:`~numpy:numpy.ndarray`
+        project_param_vector: :class:`~numpy:numpy.ndarray`
             An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
@@ -505,11 +506,11 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array.
         """
-        jacobian_matrix = self.calc_project_jacobian(global_param_vector)
-        residuals = self(global_param_vector)
+        jacobian_matrix = self.calc_project_jacobian(project_param_vector)
+        residuals = self(project_param_vector)
         return (jacobian_matrix.T * residuals).sum(axis=1)
 
-    def calc_sum_square_residuals(self, global_param_vector):
+    def calc_sum_square_residuals(self, project_param_vector):
         """
         Returns the sum squared residuals across all experiments
 
@@ -520,7 +521,7 @@ class Project(object):
 
         Parameters
         ----------
-        global_param_vector: :class:`~numpy:numpy.ndarray`
+        project_param_vector: :class:`~numpy:numpy.ndarray`
             An (n,) dimensional array containing the parameters being optimized in the project
 
         Returns
@@ -528,16 +529,16 @@ class Project(object):
         rss: : float
             The sum of all residuals
         """
-        residuals = self(global_param_vector)
+        residuals = self(project_param_vector)
         return 0.5*np.sum(residuals**2)
 
-    def nlopt_fcn(self, global_param_vector, grad):
+    def nlopt_fcn(self, project_param_vector, grad):
         """
         Wrapper to make objective function compatible with nlopt API
 
         Parameters
         ----------
-        global_param_vector: :class:`~numpy:numpy.ndarray`
+        project_param_vector: :class:`~numpy:numpy.ndarray`
             An (n,) dimensional array containing the parameters being optimized in the project
 
         grad: :class:`~numpy:numpy.ndarray`, optional
@@ -549,8 +550,8 @@ class Project(object):
             The sum of all residuals
         """
         if grad.size > 0:
-            grad[:] = self.calc_rss_gradient(global_param_vector)
-        return self.calc_sum_square_residuals(global_param_vector)
+            grad[:] = self.calc_rss_gradient(project_param_vector)
+        return self.calc_sum_square_residuals(project_param_vector)
 
     def load_param_dict(self, param_dict, default_value=0.0):
         """
@@ -562,7 +563,7 @@ class Project(object):
             Dictionary of parameters
 
         default_value: float
-            Value for the global_parameter_vector in case it's not present in the param_dict
+            Value for the project_parameter_vector in case it's not present in the param_dict
 
         Returns
         -------
@@ -573,9 +574,9 @@ class Project(object):
         --------
         param_vect_to_dict
         """
-        param_vector = np.ones((self.n_global_params,)) * default_value
-        for p_group in self.global_param_idx:
-            for exp_settings, global_idx in self.global_param_idx[p_group].items():
+        param_vector = np.ones((self.n_project_params,)) * default_value
+        for p_group in self.project_param_idx:
+            for exp_settings, global_idx in self.project_param_idx[p_group].items():
                 try:
                     param_vector[global_idx] = param_dict[p_group][exp_settings]
                 except KeyError:
@@ -601,16 +602,16 @@ class Project(object):
         load_param_dict
         """
         param_dict = {}
-        for p_group in self.global_param_idx:
+        for p_group in self.project_param_idx:
             param_dict[p_group] = {}
-            for exp_settings, global_idx in self.global_param_idx[p_group].items():
+            for exp_settings, global_idx in self.project_param_idx[p_group].items():
                 param_dict[p_group][exp_settings] = param_vector[global_idx]
         return param_dict
 
-    def model_hessian(self, global_param_vector):
+    def model_hessian(self, project_param_vector):
         pass
 
-    def parameter_uncertainty(self, global_param_vector):
+    def parameter_uncertainty(self, project_param_vector):
         pass
 
     def _calc_scale_factor_entropy(self, measure_name, temperature):

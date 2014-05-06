@@ -1,13 +1,13 @@
 __author__ = 'federico'
 
+from unittest import TestCase
+from collections import OrderedDict
 
 import numpy as np
 
 from experiment import Experiment
 from measurement import TimecourseMeasurement
-from unittest import TestCase
 from model import OdeModel
-from collections import OrderedDict
 from jittable_model import model
 from sens_jittable_model import sens_model
 
@@ -15,11 +15,11 @@ from sens_jittable_model import sens_model
 class TestOdeModel(TestCase):
     @classmethod
     def setUpClass(cls):
-        exp_timepoints = np.array([0.         ,  11.11111111,   22.22222222,   33.33333333,
-                                   44.44444444,  55.55555556,   66.66666667,   77.77777778,
-                                   88.88888889,  100.])
-        exp_measures = np.array([0.74524402,  1.53583955,  2.52502335,  3.92107899,  4.58210253,
-                                 5.45036258,  7.03185055,  7.75907324,  9.30805318,  9.751119])
+        exp_timepoints = np.array([0., 11.11111111, 22.22222222, 33.33333333,
+                                   44.44444444, 55.55555556, 66.66666667, 77.77777778,
+                                   88.88888889, 100.])
+        exp_measures = np.array([0.74524402, 1.53583955, 2.52502335, 3.92107899, 4.58210253,
+                                 5.45036258, 7.03185055, 7.75907324, 9.30805318, 9.751119])
         measurement = TimecourseMeasurement('Variable_1', exp_measures, exp_timepoints)
         simple_exp = Experiment('Simple_Experiment', measurement)
         cls.simple_exp = simple_exp
@@ -48,12 +48,12 @@ class TestOdeModel(TestCase):
     def test_simulate_experiment(self):
         variable_idx = TestOdeModel.variable_idx
         exp = TestOdeModel.simple_exp
-        param_vector = np.log(np.array([0.001,  0.01]))
+        param_vector = np.log(np.array([0.001, 0.01]))
         y_sim = TestOdeModel.ode_model.simulate_experiment(param_vector, exp, variable_idx)
         assert ('Variable_1' in y_sim)
 
-        desired = np.array([0.11049612,  0.21977129,  0.32783901,  0.43471262, 0.54040533,
-                            0.64493016,  0.74830004,  0.85052773,  0.95162583])
+        desired = np.array([0.11049612, 0.21977129, 0.32783901, 0.43471262, 0.54040533,
+                            0.64493016, 0.74830004, 0.85052773, 0.95162583])
 
         actual = y_sim['Variable_1']['value']
         assert np.allclose(actual, desired, rtol=0.05)
@@ -61,7 +61,7 @@ class TestOdeModel(TestCase):
     def test_calc_jacobian(self):
         variable_idx = TestOdeModel.variable_idx
         experiment = TestOdeModel.simple_exp
-        param_vector = np.log(np.array([0.001,  0.01]))
+        param_vector = np.log(np.array([0.001, 0.01]))
 
         var_name = variable_idx.keys()[0]
         var_idx = variable_idx.values()[0]
@@ -73,7 +73,7 @@ class TestOdeModel(TestCase):
 
         y_sim = TestOdeModel.ode_model.calc_jacobian(param_vector, experiment, variable_idx)
         assert (n_res == y_sim[var_name].shape[0])
-        # The Jacobian should have dimensions (n_res, n_global_params)
+        # The Jacobian should have dimensions (n_res, n_project_params)
 
         n_exp_par = len(experiment.param_global_vector_idx)
         assert (n_exp_par == y_sim[var_name].shape[1])
@@ -86,13 +86,14 @@ class TestOdeModel(TestCase):
         k_deg_idx = experiment.param_global_vector_idx['k_deg']
         k_deg = exponential_param_vector[k_deg_idx]
 
-        k_synt_analytical_jac = 1/k_deg - np.exp(-k_deg*exp_t)/k_deg
+        k_synt_analytical_jac = 1 / k_deg - np.exp(-k_deg * exp_t) / k_deg
         k_synt_analytical_jac *= k_synt
         k_synt_numerical_jac = y_sim[var_name][:, k_synt_idx]
 
         assert np.allclose(k_synt_analytical_jac, k_synt_numerical_jac, rtol=0.05)
 
-        k_deg_analytical_jac = k_synt*exp_t*np.exp(-k_deg*exp_t)/k_deg - k_synt/k_deg**2 + k_synt*np.exp(-k_deg*exp_t)/k_deg**2
+        k_deg_analytical_jac = k_synt * exp_t * np.exp(-k_deg * exp_t) / k_deg - k_synt / k_deg ** 2 + k_synt * np.exp(
+            -k_deg * exp_t) / k_deg ** 2
         k_deg_analytical_jac *= k_deg
         k_deg_numerical_jac = y_sim[var_name][:, k_deg_idx]
 
