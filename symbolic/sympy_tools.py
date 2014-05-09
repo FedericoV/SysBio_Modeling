@@ -156,7 +156,6 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
                            calculate_sensitivities=True, write_ordered_params=None):
     if 'module' in str(type(model_fh)):
         import inspect
-
         model_fh = open(inspect.getsourcefile(model_fh))
 
     if sens_model_fh is None:

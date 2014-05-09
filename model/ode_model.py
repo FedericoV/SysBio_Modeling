@@ -41,36 +41,30 @@ class OdeModel(ModelABC):
 
     n_vars = property(get_n_vars)
 
-    def _jacobian_sim_to_dict(self, project_param_vector, jacobian_sim, t_sim, experiment, variable_idx):
+    def _jacobian_sim_to_dict(self, project_param_vector, jacobian_sim, t_sim, experiment, mapping_struct):
         """
         Map the jacobian with respect to model parameters to the jacobian with respect to the global parameters
         """
 
-        n_vars = self._n_vars
-        y_sim_sens = jacobian_sim[:, n_vars:]
+        n_vars = self.n_vars
+        model_jac = jacobian_sim[:, n_vars:]
         # There are n_var state variables + n_vars * n_exp_params sensitivity variables.
-        n_exp_params = len(experiment.param_global_vector_idx)
+        transformed_params_deriv = OdeModel.param_transform_derivative(project_param_vector)
 
         jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
-            transformed_params_deriv = OdeModel.param_transform_derivative(project_param_vector)
-            var_name = measurement.variable_name
-            v_idx = variable_idx[var_name]
-            # Mapping between experimental measurement and model variable
-            v_0 = v_idx * n_exp_params
+            measure_name = measurement.variable_name
+            model_jac_to_measure_func = mapping_struct[measure_name]['model_jac_to_measure_jac_func']
+            mapping_parameters = mapping_struct[measure_name]['parameters']
+            measure_jac = model_jac_to_measure_func(model_jac, t_sim, experiment, measurement, mapping_parameters)
 
-            _, _, exp_timepoints = measurement.get_nonzero_measurements()
-            exp_timepoints = exp_timepoints[exp_timepoints != 0]
-            exp_t_idx = np.searchsorted(t_sim, exp_timepoints)
-
-            local_sens = y_sim_sens[exp_t_idx, v_0:(v_0+n_exp_params)]
-            var_jacobian = np.zeros((len(exp_t_idx), len(project_param_vector)))
+            var_jacobian = np.zeros((measure_jac.shape[0], len(project_param_vector)))
 
             for p_model_idx, p_name in enumerate(self.param_order):
                 # p_model_idx is the index of a parameter in the model
                 # p_name is the name of the parameter
                 try:
-                    global_idx = experiment.param_global_vector_idx[p_name]
+                    p_project_idx = experiment.param_global_vector_idx[p_name]
                     # g_idx is the index of a parameter in the global vector
                 except KeyError:
                     if p_name not in experiment.fixed_parameters:
@@ -78,8 +72,8 @@ class OdeModel(ModelABC):
                     else:
                         continue
                         # We don't calculate the jacobian wrt fixed parameters.
-                var_jacobian[:, global_idx] += local_sens[:, p_model_idx]
-            jacobian_dict[var_name] = var_jacobian * transformed_params_deriv
+                var_jacobian[:, p_project_idx] += measure_jac[:, p_model_idx]
+            jacobian_dict[measurement.variable_name] = var_jacobian * transformed_params_deriv
 
         return jacobian_dict
 
@@ -99,7 +93,7 @@ class OdeModel(ModelABC):
             exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
-    def calc_jacobian(self, project_param_vector, experiment, variable_idx):
+    def calc_jacobian(self, project_param_vector, experiment, measurement_to_model_map):
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
 
@@ -148,10 +142,11 @@ class OdeModel(ModelABC):
 
         jacobian_sim = odeint(func_wrapper, init_conditions, t_sim)
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
-        jacobian_dict = self._jacobian_sim_to_dict(project_param_vector, jacobian_sim, t_sim, experiment, variable_idx)
+        jacobian_dict = self._jacobian_sim_to_dict(project_param_vector, jacobian_sim, t_sim, experiment,
+                                                   measurement_to_model_map)
         return jacobian_dict
 
-    def simulate_experiment(self, project_param_vector, experiment, variable_idx,
+    def simulate_experiment(self, project_param_vector, experiment, mapping_struct,
                             all_timepoints=False):
         """
         Simulates the model using the `experiment` specific parameters.
@@ -164,7 +159,7 @@ class OdeModel(ModelABC):
             An (n,) dimensional array containing the parameters being optimized in the project
         experiment: Experiment
             The experiment we wish to simulate
-        variable_idx: dict
+        mapping_struct: dict
             A dict mapping the experimental measures to state variables of the model
         all_timepoints: bool, optional
             If false, the function is evaluated only for the timepoints for which there is
@@ -189,26 +184,25 @@ class OdeModel(ModelABC):
             self.model(y, t, yout, experiment_params)
             return yout
 
-        y_sim = odeint(func_wrapper, init_conditions, t_sim)
+        model_sim = odeint(func_wrapper, init_conditions, t_sim)
 
+        mapped_sim = self._map_model_sim(model_sim, experiment, mapping_struct, t_sim)
+        return mapped_sim
+
+    def _map_model_sim(self, model_sim, experiment, mapping_struct, t_sim):
         exp_sim = OrderedDict()
+
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
-            exp_sim[measure_name] = {}
-            v_idx = variable_idx[measure_name]
-            measure_sim = y_sim[:, v_idx]
+            model_variables_to_measure_func = mapping_struct[measure_name]['model_variables_to_measure_func']
+            mapping_parameters = mapping_struct[measure_name]['parameters']
 
-            if not all_timepoints:
-                exp_timepoints = measurement.timepoints
-                exp_timepoints = exp_timepoints[exp_timepoints != 0]
-                exp_t_idx = np.searchsorted(t_sim, exp_timepoints)
-                exp_t = np.take(t_sim, exp_t_idx)
-                measure_sim = np.take(measure_sim, exp_t_idx)
-            else:
-                exp_t = t_sim
+            exp_sim[measure_name] = {}
+            measure_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
+                                                                     mapping_parameters)
 
             exp_sim[measure_name]['value'] = measure_sim
-            exp_sim[measure_name]['timepoints'] = exp_t
+            exp_sim[measure_name]['timepoints'] = t_sim[exp_t_idx]
         return exp_sim
 
     @staticmethod

@@ -3,6 +3,7 @@ import warnings
 
 import numpy as np
 import scipy
+import utils
 
 
 
@@ -41,13 +42,11 @@ class Project(object):
         A model that can simulate experiments
     experiments: list of experiments
         A sorted collection of experiments.
-    n_vars : int
-        The number of state variables in the model
-    param_order : list
-        Order in which the parameters appear in the model.  Important for returning the jacobian in the correct
-        order.
-    use_jit : bool , optional
-        Whether or not to jit `sens_model` and `model` using numba
+    model_parameter_settings : dict
+        How the parameters in the model vary depending on the experimental settings in the experiments
+    measurement_to_model_map : dict
+        A dictionary of functions that maps the variables simulated by the model to the observed
+         measurements in the experiments.
     """
 
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map):
@@ -55,14 +54,46 @@ class Project(object):
         if type(experiments) is not list:
             warnings.warn('Make sure that the iterable passed has a stable iteration order')
 
-        self.experiments = experiments
+        self.experiments = experiments  # A list of all the experiments in the project
         self.experiments_weights = np.ones((len(experiments),))
-        # We expect that we always iterate through experiments in same order.
 
         self.model_parameter_settings = model_parameter_settings
-        self.measurement_to_model_map = measurement_to_model_map
 
+        # Private variables that are modified depending on experiments in project
+        self._project_param_idx = None
+        self._n_project_params = None  # How many total parameters are there that are being optimized
+        self._residuals_per_param = None  # How many data points do we have to constrain each parameter
+        self._n_residuals = None  # How many data points do we have across all experiments
+        self._measurements_idx = None  # The index of the experiments where a particular measurement is present
         self._update_project_settings()
+
+        self.use_scale_factors = {measure_name: True for measure_name in self._measurements_idx}
+
+        self.measurement_to_model_map = {}
+        if set(self._measurements_idx.keys()) != set(measurement_to_model_map.keys()):
+            raise KeyError('Measurements without explicit mapping to model variables')
+        for measure_name, (mapping_type, mapping_args) in measurement_to_model_map.items():
+            if mapping_type == 'direct':
+                assert(type(mapping_args) is int)
+                parameters = mapping_args  # Index of model variable
+                variable_map_fcn = utils.direct_model_var_to_measure
+                jacobian_map_fcn = utils.direct_model_jac_to_measure_jac
+
+            elif mapping_type == 'sum':
+                assert(type(mapping_args) is list)
+                parameters = mapping_args  # Index of model variables
+                variable_map_fcn = utils.sum_model_vars_to_measure
+                jacobian_map_fcn = utils.sum_model_jac_to_measure_jac
+
+            elif mapping_type == 'custom':
+                parameters = mapping_args[0]  # Arbitrary parameters passed to function
+                variable_map_fcn = mapping_args[1]
+                jacobian_map_fcn = mapping_args[2]
+
+            mapping_struct = {'parameters': parameters, 'model_variables_to_measure_func': variable_map_fcn,
+                              'model_jac_to_measure_jac_func': jacobian_map_fcn}
+
+            self.measurement_to_model_map[measure_name] = mapping_struct
 
         # Misc Constraints
         self._scale_factors_priors = {}
@@ -72,11 +103,11 @@ class Project(object):
         self._all_residuals = None
         self._model_jacobian = None
         self._scale_factors = None
-        self._scale_factors_jacobian = None
+        self._scale_factors_gradient = None
         self.project_param_vector = None
 
     def _update_project_settings(self):
-        self.project_param_idx, self.n_project_params, self._residuals_per_param = self._set_local_param_idx()
+        self._project_param_idx, self._n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
         # Convenience variables that depend on constructor arguments.
         self._n_residuals = self._calc_n_residuals()
@@ -92,6 +123,9 @@ class Project(object):
     def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
         if measure_name not in self.measurement_to_model_map:
             raise KeyError('%s not in project measures' % measure_name)
+        if self.use_scale_factors[measure_name] is False:
+            raise ValueError("Cannot set priors on a scale factor we are not calculating")
+
         self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
 
     def remove_experiment(self, experiment_name):
@@ -124,7 +158,7 @@ class Project(object):
         self._all_residuals = None
         self._model_jacobian = None
         self._scale_factors = None
-        self._scale_factors_jacobian = None
+        self._scale_factors_gradient = None
         self.project_param_vector = None
 
     def _set_measurement_idx(self):
@@ -166,19 +200,25 @@ class Project(object):
         Typically, the number of global parameters will be much bigger than the number of model parameters.
         """
 
-        global_pars = self.model_parameter_settings.get('Global', [])
+        all_model_parameters = set(self.model.param_order)
         local_pars = self.model_parameter_settings.get('Local', [])
         project_fixed_pars = self.model_parameter_settings.get('Fixed', [])
-        shared_pars = self.model_parameter_settings.get('Shared', {})
+        shared_pars_groups = self.model_parameter_settings.get('Shared', {})
+        global_pars = self.model_parameter_settings.get('Global', [])
 
-        project_param_idx = {}
+        shared_pars = set([p for p_group in shared_pars_groups for p in shared_pars_groups[p_group]])
+        global_pars.extend(all_model_parameters - set(local_pars) - set(project_fixed_pars) -
+                           shared_pars - set(global_pars))
+        # Parameters that have no settings are global by default
+
+        _project_param_idx = {}
         # This dict maps the location of parameters in the global parameter vector.
         residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
 
         n_params = 0
         for p in global_pars:
-            project_param_idx[p] = {}
-            project_param_idx[p]['Global'] = n_params
+            _project_param_idx[p] = {}
+            _project_param_idx[p]['Global'] = n_params
             n_params += 1
 
         for exp_idx, experiment in enumerate(self.experiments):
@@ -197,13 +237,13 @@ class Project(object):
 
             for p in global_pars:
                 if p not in all_fixed_pars:
-                    exp_param_idx[p] = project_param_idx[p]['Global']
+                    exp_param_idx[p] = _project_param_idx[p]['Global']
                     residuals_per_param[p]['Global'] += len(experiment.get_unique_timepoints())
                     # Global parameters always refer to the same index in the global parameter vector
 
-            for p_group in shared_pars:
+            for p_group in shared_pars_groups:
                 # Shared parameters depend on the experimental settings.
-                for p, settings in shared_pars[p_group].items():
+                for p, settings in shared_pars_groups[p_group].items():
                     if p in exp_fixed_pars:
                         continue  # Experiment over-writes project settings.
 
@@ -211,16 +251,16 @@ class Project(object):
                     exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
                     # Here we get the experimental conditions for all settings upon which that parameter depends.
 
-                    if p_group not in project_param_idx:
-                        project_param_idx[p_group] = {}
+                    if p_group not in _project_param_idx:
+                        _project_param_idx[p_group] = {}
                     # If it's the first time we encounter that parameter group, create it.
 
                     try:
-                        exp_param_idx[p] = project_param_idx[p_group][exp_p_settings]
+                        exp_param_idx[p] = _project_param_idx[p_group][exp_p_settings]
                         # If we already have another parameter in that parameter group and with those same
                         # experimental settings, then they point to the same location.
                     except KeyError:
-                        project_param_idx[p_group][exp_p_settings] = n_params
+                        _project_param_idx[p_group][exp_p_settings] = n_params
                         exp_param_idx[p] = n_params
                         n_params += 1
                     residuals_per_param[p_group][exp_p_settings] += len(experiment.get_unique_timepoints())
@@ -229,13 +269,13 @@ class Project(object):
                 if p in exp_fixed_pars:
                     continue  # Experiment over-writes project settings.
                 par_string = '%s_%s' % (p, experiment.name)
-                project_param_idx[par_string]['Local'] = n_params
+                _project_param_idx[par_string]['Local'] = n_params
                 exp_param_idx[p] = n_params
                 n_params += 1
                 residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
 
             self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
-        return project_param_idx, n_params, residuals_per_param
+        return _project_param_idx, n_params, residuals_per_param
 
     def _sim_experiments(self, exp_subset='all', all_timepoints=False):
         """
@@ -262,6 +302,10 @@ class Project(object):
         """
         self._scale_factors = {}
         for measure_name, experiment_list in self._measurements_idx.items():
+            if self.use_scale_factors[measure_name] is False:
+                self._scale_factors[measure_name] = 1
+                continue
+
             sim_dot_exp = np.zeros((1,), dtype='float64')
             sim_dot_sim = np.zeros((1,), dtype='float64')
 
@@ -277,34 +321,37 @@ class Project(object):
 
             self._scale_factors[measure_name] = sim_dot_exp / sim_dot_sim
 
-    def _calc_scale_factors_jacobian(self):
+    def _calc_scale_factors_gradient(self):
         """
         Analytically calculates the jacobian of the scale factors for each measurement
         """
-        self._scale_factors_jacobian = {}
+        self._scale_factors_gradient = {}
         n_global_pars = len(self.project_param_vector)
         for measure_name, experiment_list in self._measurements_idx.items():
-            sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
-            sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
-            sim_dot_sim = np.zeros((1,), dtype='float64')
-            sim_dot_exp = np.zeros((1,), dtype='float64')
+            scale_gradient = np.zeros((n_global_pars,), dtype='float64')
 
-            for exp_idx in experiment_list:
-                experiment = self.experiments[exp_idx]
-                exp_weight = self.experiments_weights[exp_idx]
+            if self.use_scale_factors[measure_name]:
+                sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
+                sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
+                sim_dot_sim = np.zeros((1,), dtype='float64')
+                sim_dot_exp = np.zeros((1,), dtype='float64')
 
-                measurement = experiment.get_variable_measurements(measure_name)
-                exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
+                for exp_idx in experiment_list:
+                    experiment = self.experiments[exp_idx]
+                    exp_weight = self.experiments_weights[exp_idx]
 
-                sim_data = self._all_sims[exp_idx][measure_name]['value']  # Vector
-                model_sens = self._model_jacobian[exp_idx][measure_name]  # Matrix
+                    measurement = experiment.get_variable_measurements(measure_name)
+                    exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
-                _accumulate__scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                               sens_dot_exp_data, sens_dot_sim, exp_weight)
+                    sim_data = self._all_sims[exp_idx][measure_name]['value']  # Vector
+                    model_sens = self._model_jacobian[exp_idx][measure_name]  # Matrix
 
-            scale_jac_out = np.zeros((n_global_pars,), dtype='float64')
-            _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out)
-            self._scale_factors_jacobian[measure_name] = scale_jac_out
+                    _accumulate__scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
+                                                   sens_dot_exp_data, sens_dot_sim, exp_weight)
+
+                _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_gradient)
+
+            self._scale_factors_gradient[measure_name] = scale_gradient
 
     def _calc_exp_residuals(self, exp_idx):
         """Returns the residuals between simulations (after scaling) and experimental measurents.
@@ -350,8 +397,8 @@ class Project(object):
         """
 
         total_params = 0
-        for p_group in self.project_param_idx:
-            exp_settings = self.project_param_idx[p_group].keys()
+        for p_group in self._project_param_idx:
+            exp_settings = self._project_param_idx[p_group].keys()
             exp_settings = sorted(exp_settings)
             if verbose:
                 print '%s  total_settings: %d ' % (p_group, len(exp_settings))
@@ -367,10 +414,10 @@ class Project(object):
 
     def get_ordered_project_params(self):
         project_params = []
-        for p_group in self.project_param_idx:
-            exp_settings = self.project_param_idx[p_group].keys()
+        for p_group in self._project_param_idx:
+            exp_settings = self._project_param_idx[p_group].keys()
             for exp_set in exp_settings:
-                global_idx = self.project_param_idx[p_group][exp_set]
+                global_idx = self._project_param_idx[p_group][exp_set]
                 global_p_name = p_group + ' ' + ''.join([str(setting) for setting in exp_set])
                 project_params.append((global_p_name, global_idx))
         project_params.sort(key=lambda x: x[1])
@@ -407,7 +454,7 @@ class Project(object):
                 res_idx += len(res_block)
         return residual_array
 
-    def calc_project_jacobian(self, project_param_vector, include_scale_factors=True):
+    def calc_project_jacobian(self, project_param_vector):
         """
         Given a cost function:
 
@@ -449,24 +496,25 @@ class Project(object):
             self._calc_residuals()
 
             self._calc_model_jacobian()
-            self._calc_scale_factors_jacobian()
+            self._calc_scale_factors_gradient()
 
         elif self._model_jacobian is None:
             self._calc_model_jacobian()
+            self._calc_scale_factors_gradient()
 
-        elif self._scale_factors_jacobian is None:
-            self._calc_scale_factors_jacobian()
+        elif self._scale_factors_gradient is None:
+            self._calc_scale_factors_gradient()
 
         jacobian_array = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
         for exp_jac, exp_sim in zip(self._model_jacobian, self._all_sims):
-            for measure in exp_jac:
-                measure_sim = exp_sim[measure]['value']
-                measure_sim_jac = exp_jac[measure]
-                measure_scale = self._scale_factors[measure]
-                measure_scale_jac = self._scale_factors_jacobian[measure]
-                if include_scale_factors:
-                    jac = measure_sim_jac*measure_scale + measure_scale_jac.T*measure_sim[:, np.newaxis]
+            for measure_name in exp_jac:
+                measure_sim = exp_sim[measure_name]['value']
+                measure_sim_jac = exp_jac[measure_name]
+                measure_scale = self._scale_factors[measure_name]
+                measure_scale_grad = self._scale_factors_gradient[measure_name]
+                if self.use_scale_factors[measure_name]:
+                    jac = measure_sim_jac*measure_scale + measure_scale_grad.T*measure_sim[:, np.newaxis]
                     # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 else:
                     jac = measure_sim_jac
@@ -498,6 +546,10 @@ class Project(object):
         -------
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array.
+
+        See Also
+        --------
+        calc_project_jacobian
         """
         jacobian_matrix = self.calc_project_jacobian(project_param_vector)
         residuals = self(project_param_vector)
@@ -541,6 +593,10 @@ class Project(object):
         -------
         rss : float
             The sum of all residuals
+
+        See Also
+        --------
+        calc_sum_square_residuals
         """
         if grad.size > 0:
             grad[:] = self.calc_rss_gradient(project_param_vector)
@@ -567,9 +623,9 @@ class Project(object):
         --------
         param_vect_to_dict
         """
-        param_vector = np.ones((self.n_project_params,)) * default_value
-        for p_group in self.project_param_idx:
-            for exp_settings, global_idx in self.project_param_idx[p_group].items():
+        param_vector = np.ones((self._n_project_params,)) * default_value
+        for p_group in self._project_param_idx:
+            for exp_settings, global_idx in self._project_param_idx[p_group].items():
                 try:
                     param_vector[global_idx] = param_dict[p_group][exp_settings]
                 except KeyError:
@@ -595,9 +651,9 @@ class Project(object):
         load_param_dict
         """
         param_dict = {}
-        for p_group in self.project_param_idx:
+        for p_group in self._project_param_idx:
             param_dict[p_group] = {}
-            for exp_settings, global_idx in self.project_param_idx[p_group].items():
+            for exp_settings, global_idx in self._project_param_idx[p_group].items():
                 param_dict[p_group][exp_settings] = param_vector[global_idx]
         return param_dict
 
@@ -657,6 +713,7 @@ class Project(object):
         """
         entropy = 0
         for measure_name in self.measurement_to_model_map:
-            entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
+            if self.use_scale_factors[measure_name]:
+                entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
         return entropy
 

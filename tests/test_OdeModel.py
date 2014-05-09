@@ -10,6 +10,7 @@ from measurement import TimecourseMeasurement
 from model import OdeModel
 from jittable_model import model
 from sens_jittable_model import sens_model
+from project import utils
 
 
 class TestOdeModel(TestCase):
@@ -26,7 +27,11 @@ class TestOdeModel(TestCase):
         cls.simple_exp.param_global_vector_idx = OrderedDict()
         cls.simple_exp.param_global_vector_idx['k_deg'] = 0
         cls.simple_exp.param_global_vector_idx['k_synt'] = 1
-        cls.variable_idx = {'Variable_1': 0}
+
+        mapping_struct = {'parameters': 0, 'model_variables_to_measure_func':  utils.direct_model_var_to_measure,
+                          'model_jac_to_measure_jac_func': utils.direct_model_jac_to_measure_jac}
+
+        cls.measurement_to_model_map = {'Variable_1': mapping_struct}
 
         # Model
         ordered_params = ['k_deg', 'k_synt']
@@ -46,7 +51,7 @@ class TestOdeModel(TestCase):
         assert np.alltrue(out == np.exp(np.ones((10,))))
 
     def test_simulate_experiment(self):
-        variable_idx = TestOdeModel.variable_idx
+        variable_idx = TestOdeModel.measurement_to_model_map
         exp = TestOdeModel.simple_exp
         param_vector = np.log(np.array([0.001, 0.01]))
         y_sim = TestOdeModel.ode_model.simulate_experiment(param_vector, exp, variable_idx)
@@ -59,7 +64,7 @@ class TestOdeModel(TestCase):
         assert np.allclose(actual, desired, rtol=0.05)
 
     def test_calc_jacobian(self):
-        variable_idx = TestOdeModel.variable_idx
+        variable_idx = TestOdeModel.measurement_to_model_map
         experiment = TestOdeModel.simple_exp
         param_vector = np.log(np.array([0.001, 0.01]))
 
@@ -73,7 +78,7 @@ class TestOdeModel(TestCase):
 
         y_sim = TestOdeModel.ode_model.calc_jacobian(param_vector, experiment, variable_idx)
         assert (n_res == y_sim[var_name].shape[0])
-        # The Jacobian should have dimensions (n_res, n_project_params)
+        # The Jacobian should have dimensions (n_res, _n_project_params)
 
         n_exp_par = len(experiment.param_global_vector_idx)
         assert (n_exp_par == y_sim[var_name].shape[1])

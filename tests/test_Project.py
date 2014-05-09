@@ -58,14 +58,14 @@ class TestProject(TestCase):
         n_vars = 1
         cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
 
-        measurement_to_model_map = {'Variable_1': 0}
+        measurement_to_model_map = {'Variable_1': ('direct', 0)}
         proj = Project(cls.ode_model, experiments, experiment_settings, measurement_to_model_map)
         cls.proj = proj
 
         project_param_vector = np.zeros((3,))
-        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
-        synt_idx = proj.project_param_idx['k_synt']['Global']
+        low_deg_idx = proj._project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj._project_param_idx['Group_1'][('High',)]
+        synt_idx = proj._project_param_idx['k_synt']['Global']
 
         project_param_vector[high_deg_idx] = 0.01
         project_param_vector[low_deg_idx] = 0.001
@@ -78,13 +78,13 @@ class TestProject(TestCase):
         proj = TestProject.proj
         assert (0 in proj._measurements_idx['Variable_1'])
         assert (1 in proj._measurements_idx['Variable_1'])
-        project_param_idx = proj.project_param_idx
-        assert (project_param_idx['k_synt'].keys() == ['Global'])
-        assert (len(project_param_idx['Group_1'].keys()) == 2)  # Two settings for k_deg
+        _project_param_idx = proj._project_param_idx
+        assert (_project_param_idx['k_synt'].keys() == ['Global'])
+        assert (len(_project_param_idx['Group_1'].keys()) == 2)  # Two settings for k_deg
 
         for exp in proj.experiments:
             setting = exp.settings['Deg_Rate']
-            assert (project_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
+            assert (_project_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
             # Check parameters are set properly
 
         assert (proj._n_residuals == 35)
@@ -147,22 +147,22 @@ class TestProject(TestCase):
         proj = TestProject.proj
         log_project_param_vector = TestProject.log_project_param_vector
         proj.calc_project_jacobian(log_project_param_vector)
-        _scale_factors_jacobian = proj._scale_factors_jacobian['Variable_1']
+        _scale_factors_gradient = proj._scale_factors_gradient['Variable_1']
 
         def get_scale_factors(x):
             proj(x)
             return proj._scale_factors['Variable_1']
 
         num_scale_factors = approx_fprime(log_project_param_vector, get_scale_factors, centered=True)
-        assert np.allclose(_scale_factors_jacobian, num_scale_factors, rtol=0.01)
+        assert np.allclose(_scale_factors_gradient, num_scale_factors, rtol=0.01)
 
     def test_calc_project_jacobian(self):
         # Known test failure.  Most likely due to numerical failures in scaling factor.
         proj = TestProject.proj
         project_param_vector = np.zeros((3,))
-        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
-        synt_idx = proj.project_param_idx['k_synt']['Global']
+        low_deg_idx = proj._project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj._project_param_idx['Group_1'][('High',)]
+        synt_idx = proj._project_param_idx['k_synt']['Global']
 
         project_param_vector[high_deg_idx] = 0.01
         project_param_vector[low_deg_idx] = 0.001
@@ -189,18 +189,18 @@ class TestProject(TestCase):
         project_param_vector[synt_idx] = 0.05
         log_project_param_vector = np.log(project_param_vector)
 
-        sens_rss_jac = proj.calc_rss_gradient(log_project_param_vector)
+        sens_rss_grad = proj.calc_rss_gradient(log_project_param_vector)
         num_rss_jac = approx_fprime(log_project_param_vector, proj.calc_sum_square_residuals, centered=True)
-        assert np.allclose(sens_rss_jac, num_rss_jac, atol=0.000001)
+        assert np.allclose(sens_rss_grad, num_rss_jac, atol=0.000001)
 
 
     @raises(AssertionError)
     def test_scale_factors_change(self):
         proj = TestProject.proj
         project_param_vector = np.zeros((3,))
-        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
-        synt_idx = proj.project_param_idx['k_synt']['Global']
+        low_deg_idx = proj._project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj._project_param_idx['Group_1'][('High',)]
+        synt_idx = proj._project_param_idx['k_synt']['Global']
 
         project_param_vector[high_deg_idx] = 0.01
         project_param_vector[low_deg_idx] = 0.001
@@ -274,4 +274,108 @@ class TestProject(TestCase):
 
     def test_experiment_settings(self):
         raise AssertionError('Not Implemented Yet')
+
+    def test_sum_variables(self):
+        from scipy.integrate import odeint
+        from jittable_mm_model import model, ordered_params
+        from sens_jittable_mm_model import sens_model
+        from michelis_menten_model import michelis_menten
+        from leastsq_mod import leastsq as geo_leastsq
+        import matplotlib.pyplot as plt
+
+        init_conditions = [0.0, 0]
+        vmax = 1e-3
+        km = 0.001
+        k_synt_s = 0.01
+        k_deg_s = 0.01
+        k_deg_p = 0.001
+        param_vector = np.array([vmax, km, k_synt_s, k_deg_s, k_deg_p])  # Wiki http://en.wikipedia.org/wiki/Michaelis%E2%80%93Menten_kinetics
+
+        t_sim = np.linspace(0, 100, 20)
+        sim = odeint(michelis_menten, init_conditions, t_sim, args=(param_vector,))
+
+        #  Here we test fitting the sum of S and P
+        total_measure = TimecourseMeasurement('Total', np.sum(sim, axis=1), t_sim)
+        single_experiment = Experiment('Standard', total_measure)
+
+        mm_model = ode_model.OdeModel(model, sens_model, 2, ordered_params)
+        measurement_to_model_map = {'Total': ('sum', [0, 1])}
+        proj = Project(mm_model, [single_experiment], {}, measurement_to_model_map)
+        proj.use_scale_factors['Total'] = False
+
+        param_dict = {'vmax': {'Global': vmax}, 'km': {'Global': km}, 'k_synt_s': {'Global': k_synt_s},
+                        'k_deg_s': {'Global': k_deg_s}, 'k_deg_p': {'Global': k_deg_p}}
+        sorted_param_vector = proj.load_param_dict(param_dict)
+        log_sorted_param_vector = np.log(sorted_param_vector)
+
+        residuals = proj(log_sorted_param_vector)
+        assert np.allclose(residuals, np.zeros_like(residuals), atol=0.001)
+
+        sens_rss_grad = proj.calc_rss_gradient(log_sorted_param_vector)
+        num_rss_grad = approx_fprime(log_sorted_param_vector, proj.calc_sum_square_residuals, centered=True)
+
+        assert np.allclose(sens_rss_grad, num_rss_grad, atol=0.00001)
+
+        def calc_all_sims(p):
+            proj(p)
+            return proj._all_sims[0]['Total']['value']
+
+        num_jac = approx_fprime(log_sorted_param_vector, calc_all_sims, centered=True)
+        sens_jac = proj.calc_project_jacobian(log_sorted_param_vector)
+
+        assert np.allclose(sens_jac, num_jac, atol=0.00001)
+
+        out = geo_leastsq(proj, np.zeros((5,)), jacobian=proj.calc_project_jacobian,
+                          tols=[1e-3, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
+                                -1.49012e-06, -1e3])
+
+        proj.calc_sum_square_residuals(out)
+        fit_sim = proj._all_sims[0]['Total']['value']
+        fit_t = proj._all_sims[0]['Total']['timepoints']
+
+        # Plotting
+        plt.plot(fit_t, fit_sim, 'r-')
+        plt.plot(t_sim, np.sum(sim, axis=1), 'ro')
+        plt.show()
+
+        # try fitting S & P separately
+        substrate_measure = TimecourseMeasurement('Substrate', sim[:, 0], t_sim)
+        product_measure = TimecourseMeasurement('Product', sim[:, 1], t_sim)
+
+        substrate_experiment = Experiment('Substrate Experiment', [substrate_measure, product_measure])
+        measurement_to_model_map = {'Substrate': ('direct', 0), 'Product': ('direct', 1)}
+
+        mm_model = ode_model.OdeModel(model, sens_model, 2, ordered_params)
+        proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map)
+        proj.use_scale_factors['Substrate'] = False
+        proj.use_scale_factors['Product'] = False
+
+        out = geo_leastsq(proj, np.random.randn(5), jacobian=proj.calc_project_jacobian,
+                          tols=[1e-6, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
+                                -1.49012e-06, -1e3])
+
+        proj.calc_sum_square_residuals(out)
+        sub_sim = proj._all_sims[0]['Substrate']['value']
+        sub_t = proj._all_sims[0]['Substrate']['timepoints']
+
+        prod_sim = proj._all_sims[0]['Product']['value']
+        prod_t = proj._all_sims[0]['Product']['timepoints']
+
+        print proj._all_residuals
+
+        plt.plot(sub_t, sub_sim, 'r-')
+        plt.plot(t_sim, sim[:, 0], 'ro')
+        plt.plot(prod_t, prod_sim, 'b-')
+        plt.plot(t_sim, sim[:, 1], 'bo')
+        plt.show()
+
+
+
+
+
+
+
+
+
+
 
