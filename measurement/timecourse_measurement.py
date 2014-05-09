@@ -4,7 +4,6 @@ from .abstract_measurement import MeasurementABC
 
 
 class TimecourseMeasurement(MeasurementABC):
-
     def __init__(self, variable_name, measurement_value, measurement_time, measurement_std=None):
         super(TimecourseMeasurement, self).__init__(variable_name, measurement_value, measurement_std)
         if not (len(measurement_value) == len(measurement_time)):
@@ -20,5 +19,4 @@ class TimecourseMeasurement(MeasurementABC):
         values = self.values[self.timepoints != 0]
         std = self.std[self.timepoints != 0]
         timepoints = self.timepoints[self.timepoints != 0]
-
         return values, std, timepoints
