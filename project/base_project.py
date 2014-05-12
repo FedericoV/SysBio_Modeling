@@ -147,17 +147,24 @@ class Project(object):
 
         for exp_idx, experiment in enumerate(self.experiments):
             for settings in list_of_settings:
+                all_equal = 1
                 for setting in settings:
                     if setting not in experiment.settings:
                         raise KeyError('%s is not a setting in experiment %s' % (setting, experiment.name))
                     if not (experiment.settings[setting] == settings[setting]):
-                        continue
+                        all_equal = 0
+                if all_equal and exp_idx not in removed_exp_idx:
                     removed_exp_idx.append(exp_idx)
 
         if len(removed_exp_idx) == 0:
             raise KeyError('None of the settings chosen were in the experiments in the project')
 
+        del_indices = np.ones((len(self.experiments_weights),))
         for exp_idx in removed_exp_idx:
+            del_indices[exp_idx] = False
+
+        # Have to traverse in reverse order to remove highest idx experiments first
+        for exp_idx in reversed(removed_exp_idx):
             self.experiments_weights = np.delete(self.experiments_weights, exp_idx)
             self.experiments.pop(exp_idx)
         self._update_project_settings()

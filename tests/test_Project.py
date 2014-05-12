@@ -11,6 +11,7 @@ from model import ode_model
 from simple_model_settings import settings as experiment_settings
 from jittable_model import model
 from sens_jittable_model import sens_model
+import copy
 
 
 __author__ = 'Federico Vaggi'
