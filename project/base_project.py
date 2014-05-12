@@ -136,11 +136,34 @@ class Project(object):
                 break
 
         if removed_exp_idx == -1:
-            raise KeyError('%s is not in the list of experiments')
+            raise KeyError('%s is not in the list of experiments' % experiment_name)
         else:
             self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
             self.experiments.pop(removed_exp_idx)
             self._update_project_settings()
+
+    def remove_experiments_by_settings(self, list_of_settings):
+        removed_exp_idx = []
+
+        for exp_idx, experiment in enumerate(self.experiments):
+            for settings in list_of_settings:
+                for setting in settings:
+                    if setting not in experiment.settings:
+                        raise KeyError('%s is not a setting in experiment %s' % (setting, experiment.name))
+                    if not (experiment.settings[setting] == settings[setting]):
+                        continue
+                    removed_exp_idx.append(exp_idx)
+
+        if len(removed_exp_idx) == 0:
+            raise KeyError('None of the settings chosen were in the experiments in the project')
+
+        for exp_idx in removed_exp_idx:
+            self.experiments_weights = np.delete(self.experiments_weights, exp_idx)
+            self.experiments.pop(exp_idx)
+        self._update_project_settings()
+
+        if len(self.experiments) == 0:
+            warnings.warn('Project has no more experiments')
 
     def get_experiment_index(self, exp_name):
         for exp_idx, experiment in enumerate(self.experiments):

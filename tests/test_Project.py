@@ -242,7 +242,7 @@ class TestProject(TestCase):
                                  5.45036258, 7.03185055, 7.75907324, 9.30805318, 9.751119])
         simple_measure = TimecourseMeasurement('Variable_1', np.log(exp_measures), exp_timepoints)
 
-        exp_settings_3 = {'Deg_Rate': 'High'}
+        exp_settings_3 = {'Deg_Rate': 'Very High'}
         simple_exp = Experiment('Simple_Experiment', simple_measure, experiment_settings=exp_settings_3)
 
         proj.add_experiment(simple_exp)
@@ -265,6 +265,15 @@ class TestProject(TestCase):
 
         if n_experiments != n_experiment_weights:
             raise AssertionError('Weight vector not updated properly')
+
+        if present == 1:
+            raise AssertionError('Unable to remove experiment from project')
+
+        proj.add_experiment(simple_exp)
+        proj.remove_experiments_by_settings([{'Deg_Rate': 'Very High'}])
+        for experiment in proj.experiments:
+            if experiment.name == 'Simple_Experiment':
+                present = 1
 
         if present == 1:
             raise AssertionError('Unable to remove experiment from project')
