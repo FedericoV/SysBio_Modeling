@@ -112,7 +112,7 @@ class TestProject(TestCase):
         # Excellent
 
         for exp_idx, res_block in enumerate(proj._all_residuals):
-            experiment = proj.experiments[exp_idx]
+            experiment = proj.get_experiment(exp_idx)
             measurement = experiment.get_variable_measurements('Variable_1')
             exp_data, _, _ = measurement.get_nonzero_measurements()
             total_measurement = np.sum(exp_data)
@@ -126,7 +126,7 @@ class TestProject(TestCase):
         proj.calc_project_jacobian(log_project_param_vector)
 
         for exp_idx, jac_block in enumerate(proj._model_jacobian):
-            experiment = proj.experiments[exp_idx]
+            experiment = proj.get_experiment(exp_idx)
             k_synt_idx = experiment.param_global_vector_idx['k_synt']
             k_deg_idx = experiment.param_global_vector_idx['k_deg']
             k_synt = project_param_vector[k_synt_idx]
@@ -234,6 +234,9 @@ class TestProject(TestCase):
         proj.remove_experiment('Fake_Experiment')
 
     def test_add_experiment(self):
+        #############################################################################################
+        # Set Up
+        #############################################################################################
         proj = TestProject.proj
 
         exp_timepoints = np.array([0., 11.11111111, 22.22222222, 33.33333333,
@@ -245,8 +248,9 @@ class TestProject(TestCase):
 
         exp_settings_3 = {'Deg_Rate': 'Very High'}
         simple_exp = Experiment('Simple_Experiment', simple_measure, experiment_settings=exp_settings_3)
-
         proj.add_experiment(simple_exp)
+        ###############################################################################################
+
         present = 0
         for experiment in proj.experiments:
             if experiment.name == 'Simple_Experiment':
@@ -261,7 +265,7 @@ class TestProject(TestCase):
             if experiment.name == 'Simple_Experiment':
                 present = 1
 
-        n_experiments = len(proj.experiments)
+        n_experiments = len(list(proj.experiments))
         n_experiment_weights = len(proj.experiments_weights)
 
         if n_experiments != n_experiment_weights:
@@ -286,6 +290,9 @@ class TestProject(TestCase):
         raise AssertionError('Not Implemented Yet')
 
     def test_sum_variables(self):
+        #############################################################################################
+        # Set Up
+        #############################################################################################
         from scipy.integrate import odeint
         from jittable_mm_model import model, ordered_params
         from sens_jittable_mm_model import sens_model
@@ -299,7 +306,8 @@ class TestProject(TestCase):
         k_synt_s = 0.01
         k_deg_s = 0.01
         k_deg_p = 0.001
-        param_vector = np.array([vmax, km, k_synt_s, k_deg_s, k_deg_p])  # Wiki http://en.wikipedia.org/wiki/Michaelis%E2%80%93Menten_kinetics
+        param_vector = np.array([vmax, km, k_synt_s, k_deg_s, k_deg_p])
+        # Wiki http://en.wikipedia.org/wiki/Michaelis%E2%80%93Menten_kinetics
 
         t_sim = np.linspace(0, 100, 20)
         sim = odeint(michelis_menten, init_conditions, t_sim, args=(param_vector,))
@@ -317,14 +325,30 @@ class TestProject(TestCase):
                         'k_deg_s': {'Global': k_deg_s}, 'k_deg_p': {'Global': k_deg_p}}
         sorted_param_vector = proj.load_param_dict(param_dict)
         log_sorted_param_vector = np.log(sorted_param_vector)
+        #############################################################################################
 
+        """
+        Testing to see that the residuals of the simulation, when using the same parameters of the ODE
+        model used to generate it, are close to zero.
+        """
         residuals = proj(log_sorted_param_vector)
         assert np.allclose(residuals, np.zeros_like(residuals), atol=0.001)
+        #############################################################################################
 
+        """
+        The finite differences gradient of the residual sum of squares is similar to the gradient calculated
+        using the sensitivity equations
+        """
         sens_rss_grad = proj.calc_rss_gradient(log_sorted_param_vector)
         num_rss_grad = approx_fprime(log_sorted_param_vector, proj.calc_sum_square_residuals, centered=True)
-
         assert np.allclose(sens_rss_grad, num_rss_grad, atol=0.00001)
+        #############################################################################################
+
+        """
+        The finite differences jacobian of the residuals is similar to the jacobian calculated
+        using sensitivity equations.  Note, because of numerical limitations of finite differences and ODE,
+        this is only approximately true
+        """
 
         def calc_all_sims(p):
             proj(p)
@@ -332,8 +356,8 @@ class TestProject(TestCase):
 
         num_jac = approx_fprime(log_sorted_param_vector, calc_all_sims, centered=True)
         sens_jac = proj.calc_project_jacobian(log_sorted_param_vector)
-
         assert np.allclose(sens_jac, num_jac, atol=0.00001)
+        #############################################################################################
 
         out = geo_leastsq(proj, np.zeros((5,)), jacobian=proj.calc_project_jacobian,
                           tols=[1e-3, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,

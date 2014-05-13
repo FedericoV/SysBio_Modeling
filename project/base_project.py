@@ -4,17 +4,20 @@ import warnings
 import numpy as np
 import scipy
 import utils
-
+import copy
+import numba
 
 
 ########################################################################################
 # Utility Functions
 ########################################################################################
+@numba.jit
 def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
     """Copied from SloppyCell"""
     B_centered = np.exp(u) * B_best
     lB = u + log_B_best
     return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
+
 
 def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
     sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
@@ -40,7 +43,7 @@ class Project(object):
     ----------
     model : :class:`~OdeModel:SysBio_Modeling.model.ode_model.OdeModel`
         A model that can simulate experiments
-    experiments: list of experiments
+    experiments: list
         A sorted collection of experiments.
     model_parameter_settings : dict
         How the parameters in the model vary depending on the experimental settings in the experiments
@@ -54,14 +57,15 @@ class Project(object):
         if type(experiments) is not list:
             warnings.warn('Make sure that the iterable passed has a stable iteration order')
 
-        self.experiments = experiments  # A list of all the experiments in the project
-        self.experiments_weights = np.ones((len(experiments),))
+        self._experiments = experiments  # A list of all the experiments in the project
+        self._experiments_weights = np.ones((len(experiments),))
 
         self.model_parameter_settings = model_parameter_settings
 
         # Private variables that are modified depending on experiments in project
         self._project_param_idx = None
         self._n_project_params = None  # How many total parameters are there that are being optimized
+
         self._residuals_per_param = None  # How many data points do we have to constrain each parameter
         self._n_residuals = None  # How many data points do we have across all experiments
         self._measurements_idx = None  # The index of the experiments where a particular measurement is present
@@ -73,6 +77,7 @@ class Project(object):
         if set(self._measurements_idx.keys()) != set(measurement_to_model_map.keys()):
             raise KeyError('Measurements without explicit mapping to model variables')
         for measure_name, (mapping_type, mapping_args) in measurement_to_model_map.items():
+
             if mapping_type == 'direct':
                 assert(type(mapping_args) is int)
                 parameters = mapping_args  # Index of model variable
@@ -90,10 +95,13 @@ class Project(object):
                 variable_map_fcn = mapping_args[1]
                 jacobian_map_fcn = mapping_args[2]
 
-            mapping_struct = {'parameters': parameters, 'model_variables_to_measure_func': variable_map_fcn,
-                              'model_jac_to_measure_jac_func': jacobian_map_fcn}
+            else:
+                raise ValueError('Invalid mapping type')
 
-            self.measurement_to_model_map[measure_name] = mapping_struct
+            mapper = {'parameters': parameters, 'model_variables_to_measure_func': variable_map_fcn,
+                      'model_jac_to_measure_jac_func': jacobian_map_fcn}
+
+            self.measurement_to_model_map[measure_name] = mapper
 
         # Misc Constraints
         self._scale_factors_priors = {}
@@ -106,6 +114,25 @@ class Project(object):
         self._scale_factors_gradient = None
         self.project_param_vector = None
 
+    @property
+    def n_project_params(self):
+        return self._n_project_params
+
+    @property
+    def scale_factors(self):
+        return copy.deepcopy(self._scale_factors)
+
+    @property
+    def experiments(self):
+        return iter(self._experiments)
+
+    @property
+    def experiments_weights(self):
+        return np.copy(self._experiments_weights)
+
+    def get_experiment(self, exp_idx):
+        return copy.deepcopy(self._experiments[exp_idx])
+
     def _update_project_settings(self):
         self._project_param_idx, self._n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
@@ -114,8 +141,16 @@ class Project(object):
         self._measurements_idx = self._set_measurement_idx()
 
     def add_experiment(self, experiment):
-        self.experiments.append(experiment)
-        self.experiments_weights = np.append(self.experiments_weights, 1)
+        """
+        Adds an experiment to the project
+
+        Attributes
+        ----------
+        experiment: :class:`~OdeModel:experiment.experiments.Experiment`
+            An experiment
+        """
+        self._experiments.append(experiment)
+        self._experiments_weights = np.append(self._experiments_weights, 1)
 
         # Now we update the project parameter settings.
         self._update_project_settings()
@@ -130,7 +165,7 @@ class Project(object):
 
     def remove_experiment(self, experiment_name):
         removed_exp_idx = -1
-        for exp_idx, experiment in enumerate(self.experiments):
+        for exp_idx, experiment in enumerate(self._experiments):
             if experiment.name == experiment_name:
                 removed_exp_idx = exp_idx
                 break
@@ -138,14 +173,14 @@ class Project(object):
         if removed_exp_idx == -1:
             raise KeyError('%s is not in the list of experiments' % experiment_name)
         else:
-            self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
-            self.experiments.pop(removed_exp_idx)
+            self._experiments_weights = np.delete(self._experiments_weights, removed_exp_idx)
+            self._experiments.pop(removed_exp_idx)
             self._update_project_settings()
 
     def remove_experiments_by_settings(self, list_of_settings):
         removed_exp_idx = []
 
-        for exp_idx, experiment in enumerate(self.experiments):
+        for exp_idx, experiment in enumerate(self._experiments):
             for settings in list_of_settings:
                 all_equal = 1
                 for setting in settings:
@@ -159,21 +194,21 @@ class Project(object):
         if len(removed_exp_idx) == 0:
             raise KeyError('None of the settings chosen were in the experiments in the project')
 
-        del_indices = np.ones((len(self.experiments_weights),))
+        del_indices = np.ones((len(self._experiments_weights),))
         for exp_idx in removed_exp_idx:
             del_indices[exp_idx] = False
 
         # Have to traverse in reverse order to remove highest idx experiments first
         for exp_idx in reversed(removed_exp_idx):
-            self.experiments_weights = np.delete(self.experiments_weights, exp_idx)
-            self.experiments.pop(exp_idx)
+            self._experiments_weights = np.delete(self._experiments_weights, exp_idx)
+            self._experiments.pop(exp_idx)
         self._update_project_settings()
 
-        if len(self.experiments) == 0:
+        if len(self._experiments) == 0:
             warnings.warn('Project has no more experiments')
 
     def get_experiment_index(self, exp_name):
-        for exp_idx, experiment in enumerate(self.experiments):
+        for exp_idx, experiment in enumerate(self._experiments):
             if exp_name == experiment.name:
                 return exp_idx
         raise KeyError('%s not in experiments')
@@ -181,7 +216,7 @@ class Project(object):
     def update_experimental_weights(self, new_weights):
         for exp_name, exp_weight in new_weights:
             exp_idx = self.get_experiment_index(exp_name)
-            self.experiments_weights[exp_idx] = exp_weight
+            self._experiments_weights[exp_idx] = exp_weight
 
     def reset_calcs(self):
         self._all_sims = None
@@ -193,7 +228,7 @@ class Project(object):
 
     def _set_measurement_idx(self):
         m_idx = {}
-        for i, experiment in enumerate(self.experiments):
+        for i, experiment in enumerate(self._experiments):
             for measurement in experiment.measurements:
                 measured_variable_name = measurement.variable_name
                 try:
@@ -208,7 +243,7 @@ class Project(object):
         Calculates the total number of experimental points across all experiments
         """
         n_res = 0
-        for experiment in self.experiments:
+        for experiment in self._experiments:
             for measurement in experiment.measurements:
                 timepoints = measurement.timepoints
                 if not include_zero:
@@ -233,10 +268,12 @@ class Project(object):
         all_model_parameters = set(self.model.param_order)
         local_pars = self.model_parameter_settings.get('Local', [])
         project_fixed_pars = self.model_parameter_settings.get('Fixed', [])
-        shared_pars_groups = self.model_parameter_settings.get('Shared', {})
         global_pars = self.model_parameter_settings.get('Global', [])
 
+        # Note - shared parameters are grouped together
+        shared_pars_groups = self.model_parameter_settings.get('Shared', {})
         shared_pars = set([p for p_group in shared_pars_groups for p in shared_pars_groups[p_group]])
+
         global_pars.extend(all_model_parameters - set(local_pars) - set(project_fixed_pars) -
                            shared_pars - set(global_pars))
         # Parameters that have no settings are global by default
@@ -251,7 +288,7 @@ class Project(object):
             _project_param_idx[p]['Global'] = n_params
             n_params += 1
 
-        for exp_idx, experiment in enumerate(self.experiments):
+        for exp_idx, experiment in enumerate(self._experiments):
             exp_param_idx = OrderedDict()
 
             try:
@@ -304,7 +341,7 @@ class Project(object):
                 n_params += 1
                 residuals_per_param[par_string]['Local'] += len(experiment.get_unique_timepoints())
 
-            self.experiments[exp_idx].param_global_vector_idx = exp_param_idx
+            self._experiments[exp_idx].param_global_vector_idx = exp_param_idx
         return _project_param_idx, n_params, residuals_per_param
 
     def _sim_experiments(self, exp_subset='all', all_timepoints=False):
@@ -316,9 +353,9 @@ class Project(object):
             raise ValueError('Parameter vector not set')
         _all_sims = []
         if exp_subset is 'all':
-            exp_subset = self.experiments
+            exp_subset = self._experiments
         else:
-            exp_subset = self.experiments[exp_subset]
+            exp_subset = self._experiments[exp_subset]
 
         for experiment in exp_subset:
             exp_sim = self.model.simulate_experiment(self.project_param_vector, experiment,
@@ -340,8 +377,8 @@ class Project(object):
             sim_dot_sim = np.zeros((1,), dtype='float64')
 
             for exp_idx in experiment_list:
-                experiment = self.experiments[exp_idx]
-                exp_weight = self.experiments_weights[exp_idx]
+                experiment = self._experiments[exp_idx]
+                exp_weight = self._experiments_weights[exp_idx]
 
                 measurement = experiment.get_variable_measurements(measure_name)
                 exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
@@ -367,8 +404,8 @@ class Project(object):
                 sim_dot_exp = np.zeros((1,), dtype='float64')
 
                 for exp_idx in experiment_list:
-                    experiment = self.experiments[exp_idx]
-                    exp_weight = self.experiments_weights[exp_idx]
+                    experiment = self._experiments[exp_idx]
+                    exp_weight = self._experiments_weights[exp_idx]
 
                     measurement = experiment.get_variable_measurements(measure_name)
                     exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
@@ -387,9 +424,9 @@ class Project(object):
         """Returns the residuals between simulations (after scaling) and experimental measurents.
         """
         residuals = OrderedDict()
-        experiment = self.experiments[exp_idx]
+        experiment = self._experiments[exp_idx]
 
-        exp_weight = self.experiments_weights[exp_idx]
+        exp_weight = self._experiments_weights[exp_idx]
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
             scale = self._scale_factors[measure_name]
@@ -406,14 +443,14 @@ class Project(object):
         Has to be called after simulations and scaling factors are calculated
         """
         _all_residuals = []
-        for exp_idx, experiment in enumerate(self.experiments):
+        for exp_idx, experiment in enumerate(self._experiments):
             exp_res = self._calc_exp_residuals(exp_idx)
             _all_residuals.append(exp_res)
         self._all_residuals = _all_residuals
 
     def _calc_model_jacobian(self):
         all_jacobians = []
-        for experiment in self.experiments:
+        for experiment in self._experiments:
             if self.project_param_vector is None:
                 raise ValueError('Parameter vector not set')
             exp_jacobian = self.model.calc_jacobian(self.project_param_vector,
@@ -653,7 +690,7 @@ class Project(object):
         --------
         param_vect_to_dict
         """
-        param_vector = np.ones((self._n_project_params,)) * default_value
+        param_vector = np.ones((self.n_project_params,)) * default_value
         for p_group in self._project_param_idx:
             for exp_settings, global_idx in self._project_param_idx[p_group].items():
                 try:
@@ -662,7 +699,7 @@ class Project(object):
                     pass
         return param_vector
 
-    def param_vect_to_dict(self, param_vector):
+    def project_param_vect_to_dict(self, param_vector):
         """
         Loads parameters from a vector into a dictionary structure
 
@@ -701,18 +738,17 @@ class Project(object):
             return 0
 
         log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
-        for  experiment_list in self._measurements_idx[measure_name]:
-            sim_dot_exp = np.zeros((1,), dtype='float64')
-            sim_dot_sim = np.zeros((1,), dtype='float64')
+        sim_dot_exp = np.zeros((1,), dtype='float64')
+        sim_dot_sim = np.zeros((1,), dtype='float64')
 
-            for exp_idx in experiment_list:
-                experiment = self.experiments[exp_idx]
-                exp_weight = self.experiments_weights[exp_idx]
-                measurement = experiment.get_variable_measurements(measure_name)
-                exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
+        for exp_idx in self._measurements_idx[measure_name]:
+            experiment = self._experiments[exp_idx]
+            exp_weight = self._experiments_weights[exp_idx]
+            measurement = experiment.get_variable_measurements(measure_name)
+            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
-                sim_data = self._all_sims[exp_idx][measure_name]['value']
-                _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
+            sim_data = self._all_sims[exp_idx][measure_name]['value']
+            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
 
         optimal_scale_factor = sim_dot_exp / sim_dot_sim
         log_optimal_scale_factor = np.log(optimal_scale_factor)
