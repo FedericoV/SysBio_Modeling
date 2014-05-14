@@ -6,7 +6,7 @@ class ModelABC(object):
 
     @abstractmethod
     def __init__(self, model, n_vars):
-        self.model = model
+        self._model = model
         self._n_vars = n_vars
 
     @abstractmethod

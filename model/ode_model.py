@@ -181,7 +181,7 @@ class OdeModel(ModelABC):
         yout = np.zeros_like(init_conditions)
 
         def func_wrapper(y, t):
-            self.model(y, t, yout, experiment_params)
+            self._model(y, t, yout, experiment_params)
             return yout
 
         model_sim = odeint(func_wrapper, init_conditions, t_sim)

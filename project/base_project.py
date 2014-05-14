@@ -56,29 +56,20 @@ class Project(object):
     """
 
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map):
-        self.model = model
-        if type(experiments) is not list:
-            warnings.warn('Make sure that the iterable passed has a stable iteration order')
-
+        # Private variables that shouldn't be carelessly modified
+        self._model = model
         self._experiments = experiments  # A list of all the experiments in the project
-        self._experiments_weights = np.ones((len(experiments),))
-
-        self.model_parameter_settings = model_parameter_settings
+        self._model_parameter_settings = model_parameter_settings
 
         # Private variables that are modified depending on experiments in project
         self._project_param_idx = None
         self._n_project_params = None  # How many total parameters are there that are being optimized
-
         self._residuals_per_param = None  # How many data points do we have to constrain each parameter
         self._n_residuals = None  # How many data points do we have across all experiments
         self._measurements_idx = None  # The index of the experiments where a particular measurement is present
         self._update_project_settings()
 
-        self.use_scale_factors = {measure_name: True for measure_name in self._measurements_idx}
-        self.use_parameter_priors = False
-        self.use_scale_factors_priors = False
-
-        self.measurement_to_model_map = {}
+        self._measurement_to_model_map = {}
         if set(self._measurements_idx.keys()) != set(measurement_to_model_map.keys()):
             raise KeyError('Measurements without explicit mapping to model variables')
         for measure_name, (mapping_type, mapping_args) in measurement_to_model_map.items():
@@ -105,11 +96,11 @@ class Project(object):
 
             mapper = {'parameters': parameters, 'model_variables_to_measure_func': variable_map_fcn,
                       'model_jac_to_measure_jac_func': jacobian_map_fcn}
-
-            self.measurement_to_model_map[measure_name] = mapper
+            self._measurement_to_model_map[measure_name] = mapper
 
         # Misc Constraints
         self._scale_factors_priors = {}
+        self._parameter_priors = {}
 
         # Variables modified upon simulation:
         self._all_sims = []
@@ -119,15 +110,21 @@ class Project(object):
         self._scale_factors_gradient = None
         self.project_param_vector = None
 
+        # Public variables - can modify them to change simulations.
+        self.experiments_weights = np.ones((len(experiments),))
+        self.use_scale_factors = {measure_name: True for measure_name in self._measurements_idx}
+        self.use_parameter_priors = False  # Use the parameter priors in the Jacobian calculation
+        self.use_scale_factors_priors = False  # Use the scale factor priors in the Jacobian calculation
+
     ##########################################################################################################
-    # Updating Private Variables
+    # Methods that update private variables
     ##########################################################################################################
 
     def _update_project_settings(self):
         self._project_param_idx, self._n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
         # Convenience variables that depend on constructor arguments.
-        self._n_residuals = self._calc_n_residuals()
+        self._n_residuals = self._set_n_residuals()
         self._measurements_idx = self._set_measurement_idx()
 
     def _set_local_param_idx(self):
@@ -146,13 +143,13 @@ class Project(object):
         This function is called when new experiments are added (or removed) from the project.
         """
 
-        all_model_parameters = set(self.model.param_order)
-        local_pars = self.model_parameter_settings.get('Local', [])
-        project_fixed_pars = self.model_parameter_settings.get('Fixed', [])
-        global_pars = self.model_parameter_settings.get('Global', [])
+        all_model_parameters = set(self._model.param_order)
+        local_pars = self._model_parameter_settings.get('Local', [])
+        project_fixed_pars = self._model_parameter_settings.get('Fixed', [])
+        global_pars = self._model_parameter_settings.get('Global', [])
 
         # Note - shared parameters are grouped together
-        shared_pars_groups = self.model_parameter_settings.get('Shared', {})
+        shared_pars_groups = self._model_parameter_settings.get('Shared', {})
         shared_pars = set([p for p_group in shared_pars_groups for p in shared_pars_groups[p_group]])
 
         global_pars.extend(all_model_parameters - set(local_pars) - set(project_fixed_pars) -
@@ -240,7 +237,7 @@ class Project(object):
                     m_idx[measure_name].append(i)
         return m_idx
 
-    def _calc_n_residuals(self, include_zero=False):
+    def _set_n_residuals(self, include_zero=False):
         """
         Calculates the total number of experimental points across all experiments
         """
@@ -271,8 +268,8 @@ class Project(object):
                 simulated_experiments = self._experiments[exp_idx]
 
         for experiment in simulated_experiments:
-            exp_sim = self.model.simulate_experiment(self.project_param_vector, experiment,
-                                                     self.measurement_to_model_map, all_timepoints)
+            exp_sim = self._model.simulate_experiment(self.project_param_vector, experiment,
+                                                     self._measurement_to_model_map, all_timepoints)
             self._all_sims.append(exp_sim)
 
     def _calc_scale_factors(self):
@@ -290,7 +287,7 @@ class Project(object):
 
             for exp_idx in experiment_list:
                 experiment = self._experiments[exp_idx]
-                exp_weight = self._experiments_weights[exp_idx]
+                exp_weight = self.experiments_weights[exp_idx]
 
                 measurement = experiment.get_variable_measurements(measure_name)
                 exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
@@ -317,7 +314,7 @@ class Project(object):
 
                 for exp_idx in experiment_list:
                     experiment = self._experiments[exp_idx]
-                    exp_weight = self._experiments_weights[exp_idx]
+                    exp_weight = self.experiments_weights[exp_idx]
 
                     measurement = experiment.get_variable_measurements(measure_name)
                     exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
@@ -384,7 +381,7 @@ class Project(object):
 
         for exp_idx in self._measurements_idx[measure_name]:
             experiment = self._experiments[exp_idx]
-            exp_weight = self._experiments_weights[exp_idx]
+            exp_weight = self.experiments_weights[exp_idx]
             measurement = experiment.get_variable_measurements(measure_name)
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
 
@@ -407,7 +404,7 @@ class Project(object):
         residuals = OrderedDict()
         experiment = self._experiments[exp_idx]
 
-        exp_weight = self._experiments_weights[exp_idx]
+        exp_weight = self.experiments_weights[exp_idx]
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
             scale = self._scale_factors[measure_name]
@@ -434,8 +431,8 @@ class Project(object):
         for experiment in self._experiments:
             if self.project_param_vector is None:
                 raise ValueError('Parameter vector not set')
-            exp_jacobian = self.model.calc_jacobian(self.project_param_vector,
-                                                    experiment, self.measurement_to_model_map)
+            exp_jacobian = self._model.calc_jacobian(self.project_param_vector,
+                                                    experiment, self._measurement_to_model_map)
             all_jacobians.append(exp_jacobian)
         self._model_jacobian = all_jacobians
 
@@ -455,10 +452,6 @@ class Project(object):
     def experiments(self):
         return iter(self._experiments)
 
-    @property
-    def experiments_weights(self):
-        return np.copy(self._experiments_weights)
-
     def get_experiment(self, exp_idx):
         return copy.deepcopy(self._experiments[exp_idx])
 
@@ -472,13 +465,13 @@ class Project(object):
             An experiment
         """
         self._experiments.append(experiment)
-        self._experiments_weights = np.append(self._experiments_weights, 1)
+        self.experiments_weights = np.append(self.experiments_weights, 1)
 
         # Now we update the project parameter settings.
         self._update_project_settings()
 
     def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
-        if measure_name not in self.measurement_to_model_map:
+        if measure_name not in self._measurement_to_model_map:
             raise KeyError('%s not in project measures' % measure_name)
         if self.use_scale_factors[measure_name] is False:
             raise ValueError("Cannot set priors on a scale factor we are not calculating")
@@ -502,7 +495,7 @@ class Project(object):
         if removed_exp_idx == -1:
             raise KeyError('%s is not in the list of experiments' % experiment_name)
         else:
-            self._experiments_weights = np.delete(self._experiments_weights, removed_exp_idx)
+            self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
             self._experiments.pop(removed_exp_idx)
             self._update_project_settings()
 
@@ -523,13 +516,13 @@ class Project(object):
         if len(removed_exp_idx) == 0:
             raise KeyError('None of the settings chosen were in the experiments in the project')
 
-        del_indices = np.ones((len(self._experiments_weights),))
+        del_indices = np.ones((len(self.experiments_weights),))
         for exp_idx in removed_exp_idx:
             del_indices[exp_idx] = False
 
         # Have to traverse in reverse order to remove highest idx experiments first
         for exp_idx in reversed(removed_exp_idx):
-            self._experiments_weights = np.delete(self._experiments_weights, exp_idx)
+            self.experiments_weights = np.delete(self.experiments_weights, exp_idx)
             self._experiments.pop(exp_idx)
         self._update_project_settings()
 
@@ -545,7 +538,7 @@ class Project(object):
     def update_experimental_weights(self, new_weights):
         for exp_name, exp_weight in new_weights:
             exp_idx = self.get_experiment_index(exp_name)
-            self._experiments_weights[exp_idx] = exp_weight
+            self.experiments_weights[exp_idx] = exp_weight
 
     def reset_calcs(self):
         self._all_sims = []
@@ -846,7 +839,7 @@ class Project(object):
             The sum of the entropy of all scale factors in the model
         """
         entropy = 0
-        for measure_name in self.measurement_to_model_map:
+        for measure_name in self._measurement_to_model_map:
             if self.use_scale_factors[measure_name]:
                 entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
         return entropy
