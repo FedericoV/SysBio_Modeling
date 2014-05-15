@@ -64,9 +64,9 @@ class TestProject(TestCase):
         cls.proj = proj
 
         project_param_vector = np.zeros((3,))
-        low_deg_idx = proj._project_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj._project_param_idx['Group_1'][('High',)]
-        synt_idx = proj._project_param_idx['k_synt']['Global']
+        low_deg_idx = proj.get_param_index('Group_1', ('Low',))
+        high_deg_idx = proj.get_param_index('Group_1', ('High',))
+        synt_idx = proj.get_param_index('k_synt', 'Global')
 
         project_param_vector[high_deg_idx] = 0.01
         project_param_vector[low_deg_idx] = 0.001
@@ -77,18 +77,18 @@ class TestProject(TestCase):
 
     def test__project_initialization(self):
         proj = TestProject.proj
-        assert (0 in proj._measurements_idx['Variable_1'])
-        assert (1 in proj._measurements_idx['Variable_1'])
         _project_param_idx = proj._project_param_idx
-        assert (_project_param_idx['k_synt'].keys() == ['Global'])
-        assert (len(_project_param_idx['Group_1'].keys()) == 2)  # Two settings for k_deg
+        k_synt_settings = proj.get_param_index('k_synt')
+        assert (k_synt_settings.keys() == ['Global'])
+        k_deg_settings = proj.get_param_index('Group_1')
+        assert (len(k_deg_settings) == 2)  # Two settings for k_deg
 
         for exp in proj.experiments:
             setting = exp.settings['Deg_Rate']
             assert (_project_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
             # Check parameters are set properly
 
-        assert (proj._n_residuals == 35)
+        assert (proj.n_project_residuals == 35)
 
     def test_set_measurement_idx(self):
         proj = TestProject.proj
@@ -193,7 +193,6 @@ class TestProject(TestCase):
         sens_rss_grad = proj.calc_rss_gradient(log_project_param_vector)
         num_rss_jac = approx_fprime(log_project_param_vector, proj.calc_sum_square_residuals, centered=True)
         assert np.allclose(sens_rss_grad, num_rss_jac, atol=0.000001)
-
 
     @raises(AssertionError)
     def test_scale_factors_change(self):
@@ -323,7 +322,7 @@ class TestProject(TestCase):
 
         param_dict = {'vmax': {'Global': vmax}, 'km': {'Global': km}, 'k_synt_s': {'Global': k_synt_s},
                         'k_deg_s': {'Global': k_deg_s}, 'k_deg_p': {'Global': k_deg_p}}
-        sorted_param_vector = proj.load_param_dict(param_dict)
+        sorted_param_vector = proj.project_param_dict_to_vect(param_dict)
         log_sorted_param_vector = np.log(sorted_param_vector)
         #############################################################################################
 
@@ -383,6 +382,8 @@ class TestProject(TestCase):
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map)
         proj.use_scale_factors['Substrate'] = False
         proj.use_scale_factors['Product'] = False
+        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
+        proj.use_parameter_priors = True
 
         out = geo_leastsq(proj, np.random.randn(5), jacobian=proj.calc_project_jacobian,
                           tols=[1e-6, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
@@ -394,8 +395,6 @@ class TestProject(TestCase):
 
         prod_sim = proj._all_sims[0]['Product']['value']
         prod_t = proj._all_sims[0]['Product']['timepoints']
-
-        print proj._all_residuals
 
         plt.plot(sub_t, sub_sim, 'r-')
         plt.plot(t_sim, sim[:, 0], 'ro')

@@ -93,7 +93,8 @@ class OdeModel(ModelABC):
             exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
-    def calc_jacobian(self, project_param_vector, experiment, measurement_to_model_map):
+    def calc_jacobian(self, project_param_vector, experiment, measurement_to_model_map, t_sim=None,
+                      init_conditions=None):
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
 
@@ -126,14 +127,17 @@ class OdeModel(ModelABC):
 
         transformed_params = OdeModel.param_transform(project_param_vector)
         experiment_params = self._global_to_experiment_params(transformed_params, experiment)
-        t_end = experiment.get_unique_timepoints()[-1]
-        t_sim = np.linspace(0, t_end, 1000)
 
         glob_parameter_indexes = experiment.param_global_vector_idx
         n_exp_params = len(glob_parameter_indexes)
         n_vars = self._n_vars
 
-        init_conditions = np.zeros((n_vars + n_exp_params * n_vars,))
+        if init_conditions is None:
+            init_conditions = np.zeros((n_vars + n_exp_params * n_vars,))
+        if t_sim is None:
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+
         yout = np.zeros_like(init_conditions)
 
         def func_wrapper(y, t):
@@ -146,8 +150,7 @@ class OdeModel(ModelABC):
                                                    measurement_to_model_map)
         return jacobian_dict
 
-    def simulate_experiment(self, project_param_vector, experiment, mapping_struct,
-                            all_timepoints=False):
+    def simulate_experiment(self, project_param_vector, experiment, mapping_struct, t_sim=None, init_conditions=None):
         """
         Simulates the model using the `experiment` specific parameters.
 
@@ -170,13 +173,14 @@ class OdeModel(ModelABC):
         exp_sim: dict
             A dictionary containing the values of the simulation.
         """
-        init_conditions = np.zeros((self._n_vars,))
-        t_end = experiment.get_unique_timepoints()[-1]
+        if init_conditions is None:
+            init_conditions = np.zeros((self._n_vars,))
+        if t_sim is None:
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+
         transformed_params = OdeModel.param_transform(project_param_vector)
         experiment_params = self._global_to_experiment_params(transformed_params, experiment)
-
-        t_sim = np.linspace(0, t_end, 1000)
-        # Note we have to begin the simulation at t-0 - but then we don't consider it.
 
         yout = np.zeros_like(init_conditions)
 

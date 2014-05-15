@@ -100,7 +100,7 @@ class Project(object):
 
         # Misc Constraints
         self._scale_factors_priors = {}
-        self._parameter_priors = {}
+        self._parameter_priors = defaultdict(dict)
 
         # Variables modified upon simulation:
         self._all_sims = []
@@ -108,7 +108,7 @@ class Project(object):
         self._model_jacobian = None
         self._scale_factors = None
         self._scale_factors_gradient = None
-        self.project_param_vector = None
+        self._project_param_vector = None
 
         # Public variables - can modify them to change simulations.
         self.experiments_weights = np.ones((len(experiments),))
@@ -254,12 +254,12 @@ class Project(object):
     # Private Simulation Methods
     ##########################################################################################################
 
-    def _sim_experiments(self, exp_subset='all', all_timepoints=False):
+    def _sim_experiments(self, exp_subset='all'):
         """
         Simulates all the experiments in the project.
         """
 
-        if self.project_param_vector is None:
+        if self._project_param_vector is None:
             raise ValueError('Parameter vector not set')
         if exp_subset is 'all':
             simulated_experiments = self._experiments
@@ -268,8 +268,8 @@ class Project(object):
                 simulated_experiments = self._experiments[exp_idx]
 
         for experiment in simulated_experiments:
-            exp_sim = self._model.simulate_experiment(self.project_param_vector, experiment,
-                                                     self._measurement_to_model_map, all_timepoints)
+            exp_sim = self._model.simulate_experiment(self._project_param_vector, experiment,
+                                                      self._measurement_to_model_map)
             self._all_sims.append(exp_sim)
 
     def _calc_scale_factors(self):
@@ -302,7 +302,7 @@ class Project(object):
         Analytically calculates the jacobian of the scale factors for each measurement
         """
         self._scale_factors_gradient = {}
-        n_global_pars = len(self.project_param_vector)
+        n_global_pars = len(self._project_param_vector)
         for measure_name, experiment_list in self._measurements_idx.items():
             scale_factor_gradient = np.zeros((n_global_pars,), dtype='float64')
 
@@ -345,7 +345,7 @@ class Project(object):
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
                 p_idx = self._project_param_idx[parameter_group][setting]
-                log_p_value = self.project_param_vector[p_idx]
+                log_p_value = self._project_param_vector[p_idx]
                 log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
                 res = log_p_value - log_scale_parameter_prior / log_sigma_parameter
                 parameter_residuals.append((p_idx, res))
@@ -358,7 +358,7 @@ class Project(object):
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
                 p_idx = self._project_param_idx[parameter_group][setting]
-                log_p_value = self.project_param_vector[p_idx]
+                log_p_value = self._project_param_vector[p_idx]
                 exp_inv = 1 / np.exp(log_p_value)
                 parameter_priors.append((p_idx, exp_inv))
 
@@ -429,9 +429,9 @@ class Project(object):
     def _calc_model_jacobian(self):
         all_jacobians = []
         for experiment in self._experiments:
-            if self.project_param_vector is None:
+            if self._project_param_vector is None:
                 raise ValueError('Parameter vector not set')
-            exp_jacobian = self._model.calc_jacobian(self.project_param_vector,
+            exp_jacobian = self._model.calc_jacobian(self._project_param_vector,
                                                     experiment, self._measurement_to_model_map)
             all_jacobians.append(exp_jacobian)
         self._model_jacobian = all_jacobians
@@ -445,6 +445,10 @@ class Project(object):
         return self._n_project_params
 
     @property
+    def n_project_residuals(self):
+        return self._n_residuals
+
+    @property
     def scale_factors(self):
         return copy.deepcopy(self._scale_factors)
 
@@ -452,8 +456,9 @@ class Project(object):
     def experiments(self):
         return iter(self._experiments)
 
-    def get_experiment(self, exp_idx):
-        return copy.deepcopy(self._experiments[exp_idx])
+    @property
+    def project_param_vector(self):
+        return np.copy(self._project_param_vector)
 
     def add_experiment(self, experiment):
         """
@@ -470,34 +475,12 @@ class Project(object):
         # Now we update the project parameter settings.
         self._update_project_settings()
 
-    def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
-        if measure_name not in self._measurement_to_model_map:
-            raise KeyError('%s not in project measures' % measure_name)
-        if self.use_scale_factors[measure_name] is False:
-            raise ValueError("Cannot set priors on a scale factor we are not calculating")
-
-        self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
-
-    def set_parameter_log_prior(self, parameter, parameter_setting, log_scale_parameter_prior, log_sigma_parameter):
-        try:
-            self._project_param_idx[parameter][parameter_setting]
-        except KeyError:
-            raise KeyError('%s with settings %s not in the project parameters')
-        self._parameter_priors[parameter][parameter_setting] = (log_scale_parameter_prior, log_sigma_parameter)
-
     def remove_experiment(self, experiment_name):
-        removed_exp_idx = -1
-        for exp_idx, experiment in enumerate(self._experiments):
-            if experiment.name == experiment_name:
-                removed_exp_idx = exp_idx
-                break
+        removed_exp_idx = self.get_experiment_index(experiment_name)
 
-        if removed_exp_idx == -1:
-            raise KeyError('%s is not in the list of experiments' % experiment_name)
-        else:
-            self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
-            self._experiments.pop(removed_exp_idx)
-            self._update_project_settings()
+        self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
+        self._experiments.pop(removed_exp_idx)
+        self._update_project_settings()
 
     def remove_experiments_by_settings(self, list_of_settings):
         removed_exp_idx = []
@@ -529,16 +512,35 @@ class Project(object):
         if len(self._experiments) == 0:
             warnings.warn('Project has no more experiments')
 
+    def get_experiment(self, exp_idx):
+        return copy.deepcopy(self._experiments[exp_idx])
+
     def get_experiment_index(self, exp_name):
         for exp_idx, experiment in enumerate(self._experiments):
             if exp_name == experiment.name:
                 return exp_idx
         raise KeyError('%s not in experiments')
 
-    def update_experimental_weights(self, new_weights):
-        for exp_name, exp_weight in new_weights:
-            exp_idx = self.get_experiment_index(exp_name)
-            self.experiments_weights[exp_idx] = exp_weight
+    def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
+        if measure_name not in self._measurement_to_model_map:
+            raise KeyError('%s not in project measures' % measure_name)
+        if self.use_scale_factors[measure_name] is False:
+            raise ValueError("Cannot set priors on a scale factor we are not calculating")
+
+        self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
+
+    def set_parameter_log_prior(self, parameter, parameter_setting, log_scale_parameter_prior, log_sigma_parameter):
+        try:
+            self._project_param_idx[parameter][parameter_setting]
+        except KeyError:
+            raise KeyError('%s with settings %s not in the project parameters')
+        self._parameter_priors[parameter][parameter_setting] = (log_scale_parameter_prior, log_sigma_parameter)
+
+    def get_param_index(self, parameter_group, settings='all'):
+        if settings is 'all':
+            return self._project_param_idx[parameter_group]
+        else:
+            return self._project_param_idx[parameter_group][settings]
 
     def reset_calcs(self):
         self._all_sims = []
@@ -546,7 +548,7 @@ class Project(object):
         self._model_jacobian = None
         self._scale_factors = None
         self._scale_factors_gradient = None
-        self.project_param_vector = None
+        self._project_param_vector = None
 
     def print_param_settings(self, verbose=True):
         """
@@ -595,9 +597,9 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        if (self.project_param_vector is None) or (not np.alltrue(project_param_vector == self.project_param_vector)):
+        if (self._project_param_vector is None) or (not np.alltrue(project_param_vector == self._project_param_vector)):
             self.reset_calcs()
-            self.project_param_vector = np.copy(project_param_vector)
+            self._project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
             self._calc_scale_factors()
@@ -645,9 +647,9 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
-        if self.project_param_vector is None or not np.alltrue(project_param_vector == self.project_param_vector):
+        if self._project_param_vector is None or not np.alltrue(project_param_vector == self._project_param_vector):
             self.reset_calcs()
-            self.project_param_vector = np.copy(project_param_vector)
+            self._project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
             self._calc_scale_factors()
@@ -760,7 +762,7 @@ class Project(object):
             grad[:] = self.calc_rss_gradient(project_param_vector)
         return self.calc_sum_square_residuals(project_param_vector)
 
-    def load_param_dict(self, param_dict, default_value=0.0):
+    def project_param_dict_to_vect(self, param_dict, default_value=0.0):
         """
         Loads parameters from a dictionary (default output format for saving at the end of a fit)
 
@@ -821,7 +823,7 @@ class Project(object):
     def parameter_uncertainty(self, project_param_vector):
         pass
 
-    def get_total_scale_factor_entropy(self, temperature=1.0):
+    def calc_scale_factors_entropy(self, temperature=1.0):
         """
         Calculates the entropy from the scale factors.  Currently only log priors are supported.
 
