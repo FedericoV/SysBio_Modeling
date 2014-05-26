@@ -846,3 +846,14 @@ class Project(object):
                 entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
         return entropy
 
+    def free_energy(self, project_param_vector, temperature=1):
+        rss = self.calc_sum_square_residuals(project_param_vector)
+        entropy = self.calc_scale_factors_entropy(temperature)
+        return rss - temperature * entropy
+
+    def hessian(self, project_param_vector):
+        j = self.calc_project_jacobian(project_param_vector)
+        h = np.dot(j.T, j)
+        return h
+
+

@@ -121,13 +121,13 @@ def ensemble_log_params(p, params, hess=None,
     scipy.random.seed(seeds)
 
     curr_params = copy.deepcopy(params)
-    curr_F = p.project_free_energy(curr_params, temperature)
+    curr_F = p.free_energy(curr_params, temperature)
     ens, ens_Fs = [curr_params], [curr_F]
     curr_sf = p.scale_factors
     ens_scale_factors = [curr_sf]
 
     if recalc_func is None and log_params:
-        recalc_func = p.project_hessian
+        recalc_func = p.hessian
 
     accepted_moves, attempt_exceptions, ratio = 0, 0, scipy.nan
     start_time = last_save_time = time.time()
@@ -150,9 +150,14 @@ def ensemble_log_params(p, params, hess=None,
         #scaled_step = step_scale * scipy.sqrt(temperature) * deltaParams
         scaled_step = deltaParams
         next_params = curr_params + scaled_step
+        next_F = p.free_energy(next_params, temperature)
 
-        next_F = p.project_free_energy(next_params, temperature)
-        accepted = _accept_move(next_F - curr_F, temperature)
+        if recalc_hess_alg and not scipy.isinf(next_F):
+            next_hess = recalc_func(next_params)
+            next_samp_mat = _sampling_matrix(next_hess, sing_val_cutoff, temperature, step_scale)
+            accepted = _accept_move_recalc_alg(curr_F, samp_mat, next_F, next_samp_mat, deltaParams, temperature)
+        else:
+            accepted = _accept_move(next_F - curr_F, temperature)
 
         steps_attempted += 1
         if accepted:
@@ -168,19 +173,6 @@ def ensemble_log_params(p, params, hess=None,
             else:
                 ens.append(curr_params)
         ratio = accepted_moves/steps_attempted
-
-        # Save to a file
-        if save_to is not None\
-           and time.time() >= last_save_time + save_hours * 3600:
-            _save_ens(ens, ens_Fs, ratio, save_to, attempt_exceptions,
-                      steps_attempted, ens_scale_factors, 
-                      save_sf=save_scalefactors)
-            last_save_time = time.time()
-
-    if save_to is not None:
-        _save_ens(ens, ens_Fs, ratio, save_to, attempt_exceptions, 
-                  steps_attempted, ens_scale_factors,
-                  save_sf=save_scalefactors)
 
     if save_scalefactors:
         return ens, ens_Fs, ratio, ens_scale_factors
