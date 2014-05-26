@@ -20,3 +20,13 @@ class TimecourseMeasurement(MeasurementABC):
         std = self.std[self.timepoints != 0]
         timepoints = self.timepoints[self.timepoints != 0]
         return values, std, timepoints
+
+    def plot_measurement(self, ax=None, **kwargs):
+        import matplotlib.pyplot as plt
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+        if len(kwargs) == 0:
+            kwargs = {'color': 'red', 'marker': 'o', 'linestyle': '--'}
+        ax.errorbar(self.timepoints, self.values, self.std, **kwargs)
+        return ax
