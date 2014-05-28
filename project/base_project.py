@@ -27,15 +27,15 @@ def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_
     sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
 
 
-def _accumulate__scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
-                                   sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim, exp_weight=1):
+def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
+                                  sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim, exp_weight=1):
     sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1) * exp_weight  # Vector
     sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1) * exp_weight  # Vector
     sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2)) * exp_weight  # Scalar
     sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2)) * exp_weight  # Scalar
 
 
-def _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
+def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
     scale_jac_out[:] = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
 
 
@@ -76,6 +76,8 @@ class Project(object):
 
             if mapping_type == 'direct':
                 assert(type(mapping_args) is int)
+                if mapping_args >= model.n_vars:
+                    raise ValueError('Index (%d) has to be smaller than %d' % (mapping_args, model.n_vars))
                 parameters = mapping_args  # Index of model variable
                 variable_map_fcn = utils.direct_model_var_to_measure
                 jacobian_map_fcn = utils.direct_model_jac_to_measure_jac
@@ -152,8 +154,14 @@ class Project(object):
         shared_pars_groups = self._model_parameter_settings.get('Shared', {})
         shared_pars = set([p for p_group in shared_pars_groups for p in shared_pars_groups[p_group]])
 
-        global_pars.extend(all_model_parameters - set(local_pars) - set(project_fixed_pars) -
-                           shared_pars - set(global_pars))
+        no_settings_params = (all_model_parameters - set(local_pars) - set(project_fixed_pars) -
+                              shared_pars - set(global_pars))
+
+        if len(no_settings_params) > 0:
+            par_str = ", ".join(no_settings_params)
+            print "The following parameters are global because no settings were specified: %s " % par_str
+
+        global_pars.extend(no_settings_params)
         # Parameters that have no settings are global by default
 
         _project_param_idx = {}
@@ -322,16 +330,18 @@ class Project(object):
                     sim_data = self._all_sims[exp_idx][measure_name]['value']  # Vector
                     model_sens = self._model_jacobian[exp_idx][measure_name]  # Matrix
 
-                    _accumulate__scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                                   sens_dot_exp_data, sens_dot_sim, exp_weight)
+                    _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
+                                                  sens_dot_exp_data, sens_dot_sim, exp_weight)
 
-                _combine__scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp,
-                                        scale_factor_gradient)
+                _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp,
+                                       scale_factor_gradient)
 
             self._scale_factors_gradient[measure_name] = scale_factor_gradient
 
-    def _calc_scale_factor_prior_gradient(self, measure_name, scale_factor_gradient):
+    def _calc_scale_factor_prior_gradient(self, measure_name):
         scale_factor = self.scale_factors[measure_name]
+        scale_factor_gradient = self._scale_factors_gradient[measure_name]
+
         log_scale_factor = np.log(scale_factor)
         log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
         scale_factor_prior_penalty = ((scale_factor_gradient / log_sigma_scale_factor ** 2) *
@@ -432,7 +442,7 @@ class Project(object):
             if self._project_param_vector is None:
                 raise ValueError('Parameter vector not set')
             exp_jacobian = self._model.calc_jacobian(self._project_param_vector,
-                                                    experiment, self._measurement_to_model_map)
+                                                     experiment, self._measurement_to_model_map)
             all_jacobians.append(exp_jacobian)
         self._model_jacobian = all_jacobians
 

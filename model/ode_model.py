@@ -128,8 +128,7 @@ class OdeModel(ModelABC):
         transformed_params = OdeModel.param_transform(project_param_vector)
         experiment_params = self._global_to_experiment_params(transformed_params, experiment)
 
-        glob_parameter_indexes = experiment.param_global_vector_idx
-        n_exp_params = len(glob_parameter_indexes)
+        n_exp_params = len(experiment.param_global_vector_idx)
         n_vars = self._n_vars
 
         if init_conditions is None:
