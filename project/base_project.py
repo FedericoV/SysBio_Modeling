@@ -11,6 +11,7 @@ import utils
 
 
 
+
 ########################################################################################
 # Utility Functions
 ########################################################################################
@@ -110,7 +111,7 @@ class Project(object):
         self._model_jacobian = None
         self._scale_factors = None
         self._scale_factors_gradient = None
-        self._project_param_vector = None
+        self._project_param_vector = np.zeros((self.n_project_params,))
 
         # Public variables - can modify them to change simulations.
         self.experiments_weights = np.ones((len(experiments),))
@@ -337,6 +338,10 @@ class Project(object):
                                        scale_factor_gradient)
 
             self._scale_factors_gradient[measure_name] = scale_factor_gradient
+            if self.use_scale_factors_priors:
+                if measure_name in self._scale_factors_priors:
+                    scale_factor_prior_gradient = self._calc_scale_factor_prior_gradient(measure_name)
+                    self._scale_factors_gradient[measure_name] += scale_factor_prior_gradient
 
     def _calc_scale_factor_prior_gradient(self, measure_name):
         scale_factor = self.scale_factors[measure_name]
@@ -344,24 +349,11 @@ class Project(object):
 
         log_scale_factor = np.log(scale_factor)
         log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
-        scale_factor_prior_penalty = ((scale_factor_gradient / log_sigma_scale_factor ** 2) *
-                                      (log_scale_factor - log_scale_factor_prior))
-        # scale factor log priors are of form: (log(B_i(theta)) - log(B_*) / sigma_log_B_*)**2
+        scale_factor_prior_gradient = ((scale_factor_gradient / log_sigma_scale_factor ** 2) *
+                                       (log_scale_factor - log_scale_factor_prior))
+        # scale factor log priors are of form: (log(B_i(theta)) - log(B_prior) / sigma_log_B_prior)**2
         # derive that wrt theta and you get above formula
-        return scale_factor_prior_penalty
-
-    def _calc_parameters_prior_residuals(self):
-        parameter_residuals = []
-        for parameter_group in self._parameter_priors:
-            for setting in self._parameter_priors[parameter_group]:
-                p_idx = self._project_param_idx[parameter_group][setting]
-                log_p_value = self._project_param_vector[p_idx]
-                log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
-                res = log_p_value - log_scale_parameter_prior / log_sigma_parameter
-                parameter_residuals.append((p_idx, res))
-
-        parameter_residuals.sort(lambda x: x[0])
-        return zip(*parameter_residuals)[0]
+        return scale_factor_prior_gradient
 
     def _calc_parameters_prior_jacobian(self):
         parameter_priors = []
@@ -377,6 +369,20 @@ class Project(object):
             parameter_prior_jac[p_idx, p_idx] = exp_inv
 
         return parameter_prior_jac
+
+    def _calc_parameters_prior_residuals(self):
+        parameter_residuals = []
+        for parameter_group in self._parameter_priors:
+            for setting in self._parameter_priors[parameter_group]:
+                p_idx = self._project_param_idx[parameter_group][setting]
+                log_p_value = self._project_param_vector[p_idx]
+                log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
+                res = log_p_value - log_scale_parameter_prior / log_sigma_parameter
+                parameter_residuals.append((p_idx, res))  # We save the index of the parameter for sorting
+
+        parameter_residuals.sort(lambda x: x[0])
+        sorted_parameter_residuals = zip(*parameter_residuals)[0]
+        return sorted_parameter_residuals
 
     def _calc_scale_factor_entropy(self, measure_name, temperature):
         """
@@ -408,7 +414,7 @@ class Project(object):
         entropy = np.log(ans)
         return entropy
 
-    def _calc_exp_residuals(self, exp_idx):
+    def _calc_experiment_residuals(self, exp_idx):
         """Returns the residuals between simulations (after scaling) and experimental measurents.
         """
         residuals = OrderedDict()
@@ -425,14 +431,14 @@ class Project(object):
             residuals[measure_name] = (sim_data * scale - exp_data) / exp_std
         return residuals
 
-    def _calc_residuals(self):
+    def _calc_all_residuals(self):
         """
         Calculates residuals between the simulations, scaled by the scaling factor and the simulations.
         Has to be called after simulations and scaling factors are calculated
         """
         _all_residuals = []
         for exp_idx, experiment in enumerate(self._experiments):
-            exp_res = self._calc_exp_residuals(exp_idx)
+            exp_res = self._calc_experiment_residuals(exp_idx)
             _all_residuals.append(exp_res)
         self._all_residuals = _all_residuals
 
@@ -558,7 +564,7 @@ class Project(object):
         self._model_jacobian = None
         self._scale_factors = None
         self._scale_factors_gradient = None
-        self._project_param_vector = None
+        self._project_param_vector = np.zeros((self.n_project_params,))
 
     def print_param_settings(self, verbose=True):
         """
@@ -607,22 +613,29 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        if (self._project_param_vector is None) or (not np.alltrue(project_param_vector == self._project_param_vector)):
+        if not np.alltrue(project_param_vector == self._project_param_vector):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
             self._calc_scale_factors()
-            self._calc_residuals()
+            self._calc_all_residuals()
 
-        residual_array = np.zeros((self._n_residuals,))
+        experiment_residuals = np.zeros((self._n_residuals,))
         res_idx = 0
         for exp_res in self._all_residuals:
             for res_block in exp_res.values():
-                residual_array[res_idx:res_idx+len(res_block)] = res_block
+                experiment_residuals[res_idx:res_idx + len(res_block)] = res_block
                 res_idx += len(res_block)
 
-        return residual_array
+        if self.use_parameter_priors:
+            parameter_prior_residuals = self._calc_parameters_prior_residuals()
+            all_residuals = np.hstack((experiment_residuals, parameter_prior_residuals))
+
+        else:
+            all_residuals = experiment_residuals
+
+        return all_residuals
 
     def calc_project_jacobian(self, project_param_vector):
         """
@@ -657,13 +670,13 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
-        if self._project_param_vector is None or not np.alltrue(project_param_vector == self._project_param_vector):
+        if not np.alltrue(project_param_vector == self._project_param_vector):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
             self._calc_scale_factors()
-            self._calc_residuals()
+            self._calc_all_residuals()
 
             self._calc_model_jacobian()
             self._calc_scale_factors_gradient()
@@ -675,7 +688,7 @@ class Project(object):
         elif self._scale_factors_gradient is None:
             self._calc_scale_factors_gradient()
 
-        jacobian_array = np.zeros((self._n_residuals, len(project_param_vector)))
+        experiment_residuals_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
         for exp_jac, exp_sim in zip(self._model_jacobian, self._all_sims):
             for measure_name in exp_jac:
@@ -688,10 +701,17 @@ class Project(object):
                     # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 else:
                     jac = measure_sim_jac
-                jacobian_array[res_idx:res_idx+len(measure_sim), :] = jac
+                experiment_residuals_jacobian[res_idx:res_idx + len(measure_sim), :] = jac
                 res_idx += len(measure_sim)
 
-        return jacobian_array
+        if self.use_parameter_priors:
+            parameter_priors_jacobian = self._calc_parameters_prior_jacobian()
+            project_jacobian = np.hstack((experiment_residuals_jacobian, parameter_priors_jacobian))
+
+        else:
+            project_jacobian = experiment_residuals_jacobian
+
+        return project_jacobian
 
     def calc_rss_gradient(self, project_param_vector):
         """
