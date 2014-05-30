@@ -13,6 +13,7 @@ import utils
 
 
 
+
 ########################################################################################
 # Utility Functions
 ########################################################################################
@@ -354,7 +355,7 @@ class Project(object):
             jac = scale_factor_gradient / scale_factor
             scale_factor_priors_jacobian.append(jac)
 
-        return scale_factor_priors_jacobian
+        return np.array(scale_factor_priors_jacobian)
 
     def _calc_scale_factors_prior_residuals(self):
         scale_factor_residuals = []
@@ -365,7 +366,7 @@ class Project(object):
             res = (log_scale_factor - log_scale_factor_prior) / log_sigma_scale_factor
             scale_factor_residuals.append(res)
 
-        return scale_factor_residuals
+        return np.array(scale_factor_residuals)
 
     def _calc_parameters_prior_jacobian(self):
         """
@@ -383,7 +384,7 @@ class Project(object):
                 jac[p_idx] = 1
                 parameter_priors_jacobian.append(jac)
 
-        return parameter_priors_jacobian
+        return np.array(parameter_priors_jacobian)
 
     def _calc_parameters_prior_residuals(self):
         parameter_prior_residuals = []
@@ -395,7 +396,7 @@ class Project(object):
                 res = (log_p_value - log_scale_parameter_prior) / log_sigma_parameter
                 parameter_prior_residuals.append(res)  # We save the index of the parameter for sorting
 
-        return parameter_prior_residuals
+        return np.array(parameter_prior_residuals)
 
     def _calc_scale_factor_entropy(self, measure_name, temperature):
         """
@@ -656,7 +657,7 @@ class Project(object):
 
         if self.use_scale_factors_priors and len(self._scale_factors_priors):
             scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
-            project_residuals = np.vstack((measurement_residuals, scale_factor_priors_residuals))
+            project_residuals = np.hstack((measurement_residuals, scale_factor_priors_residuals.ravel()))
 
         else:
             project_residuals = measurement_residuals
