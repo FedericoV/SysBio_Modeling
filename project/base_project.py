@@ -12,6 +12,7 @@ import utils
 
 
 
+
 ########################################################################################
 # Utility Functions
 ########################################################################################
@@ -102,8 +103,8 @@ class Project(object):
             self._measurement_to_model_map[measure_name] = mapper
 
         # Misc Constraints
-        self._scale_factors_priors = {}
-        self._parameter_priors = defaultdict(dict)
+        self._scale_factors_priors = OrderedDict()
+        self._parameter_priors = OrderedDict()
 
         # Variables modified upon simulation:
         self._all_sims = []
@@ -285,7 +286,7 @@ class Project(object):
         """
         Analytically calculates the optimal scale factor for measurements that are in arbitrary units
         """
-        self._scale_factors = {}
+        self._scale_factors = OrderedDict()
         for measure_name, experiment_list in self._measurements_idx.items():
             if self.use_scale_factors[measure_name] is False:
                 self._scale_factors[measure_name] = 1
@@ -338,51 +339,63 @@ class Project(object):
                                        scale_factor_gradient)
 
             self._scale_factors_gradient[measure_name] = scale_factor_gradient
-            if self.use_scale_factors_priors:
-                if measure_name in self._scale_factors_priors:
-                    scale_factor_prior_gradient = self._calc_scale_factor_prior_gradient(measure_name)
-                    self._scale_factors_gradient[measure_name] += scale_factor_prior_gradient
 
-    def _calc_scale_factor_prior_gradient(self, measure_name):
-        scale_factor = self.scale_factors[measure_name]
-        scale_factor_gradient = self._scale_factors_gradient[measure_name]
+    def _calc_scale_factors_prior_jacobian(self):
+        """
+        prior penalty is: ((log(B(theta)) - log_B_prior) / sigma_b_prior)**2
 
-        log_scale_factor = np.log(scale_factor)
-        log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
-        scale_factor_prior_gradient = ((scale_factor_gradient / log_sigma_scale_factor ** 2) *
-                                       (log_scale_factor - log_scale_factor_prior))
-        # scale factor log priors are of form: (log(B_i(theta)) - log(B_prior) / sigma_log_B_prior)**2
-        # derive that wrt theta and you get above formula
-        return scale_factor_prior_gradient
+        derive (log(B(theta)) = 1/B(theta) * dB/dtheta
+        dB/dtheta is the scale factor gradient
+        """
+        scale_factor_priors_jacobian = []
+        for measure_name in self._scale_factors_priors:
+            scale_factor = self.scale_factors[measure_name]
+            scale_factor_gradient = self._scale_factors_gradient[measure_name]
+            jac = scale_factor_gradient / scale_factor
+            scale_factor_priors_jacobian.append(jac)
+
+        return scale_factor_priors_jacobian
+
+    def _calc_scale_factors_prior_residuals(self):
+        scale_factor_residuals = []
+        for measure_name in self._scale_factors_priors:
+            scale_factor = self.scale_factors[measure_name]
+            log_scale_factor = np.log(scale_factor)
+            log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
+            res = (log_scale_factor - log_scale_factor_prior) / log_sigma_scale_factor
+            scale_factor_residuals.append(res)
+
+        return scale_factor_residuals
 
     def _calc_parameters_prior_jacobian(self):
-        parameter_priors = []
+        """
+        Since all parameters are already in logspace, and the priors are all in log space:
+        parameter_prior = (log(theta) - log_prior / sigma) **2 -
+        We work with log(theta) directly, so d(log(theta))/d(log(theta)) is 1.
+        """
+        parameter_priors_jacobian = []
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
                 p_idx = self._project_param_idx[parameter_group][setting]
-                log_p_value = self._project_param_vector[p_idx]
-                exp_inv = 1 / np.exp(log_p_value)
-                parameter_priors.append((p_idx, exp_inv))
+                #log_p_value = self._project_param_vector[p_idx]
+                #exp_inv = 1 / np.exp(log_p_value)
+                jac = np.zeros((self.n_project_params,))
+                jac[p_idx] = 1
+                parameter_priors_jacobian.append(jac)
 
-        parameter_prior_jac = np.zeros((len(parameter_priors, self.n_project_params)))
-        for p_idx, exp_inv in parameter_priors:
-            parameter_prior_jac[p_idx, p_idx] = exp_inv
-
-        return parameter_prior_jac
+        return parameter_priors_jacobian
 
     def _calc_parameters_prior_residuals(self):
-        parameter_residuals = []
+        parameter_prior_residuals = []
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
                 p_idx = self._project_param_idx[parameter_group][setting]
                 log_p_value = self._project_param_vector[p_idx]
                 log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
-                res = log_p_value - log_scale_parameter_prior / log_sigma_parameter
-                parameter_residuals.append((p_idx, res))  # We save the index of the parameter for sorting
+                res = (log_p_value - log_scale_parameter_prior) / log_sigma_parameter
+                parameter_prior_residuals.append(res)  # We save the index of the parameter for sorting
 
-        parameter_residuals.sort(lambda x: x[0])
-        sorted_parameter_residuals = zip(*parameter_residuals)[0]
-        return sorted_parameter_residuals
+        return parameter_prior_residuals
 
     def _calc_scale_factor_entropy(self, measure_name, temperature):
         """
@@ -545,12 +558,21 @@ class Project(object):
 
         self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
 
+    def get_scale_factor_priors(self):
+        return copy.deepcopy(self._scale_factors_priors)
+
     def set_parameter_log_prior(self, parameter, parameter_setting, log_scale_parameter_prior, log_sigma_parameter):
         try:
             self._project_param_idx[parameter][parameter_setting]
         except KeyError:
             raise KeyError('%s with settings %s not in the project parameters')
+        if parameter not in self._parameter_priors:
+            self._parameter_priors[parameter] = OrderedDict()
+
         self._parameter_priors[parameter][parameter_setting] = (log_scale_parameter_prior, log_sigma_parameter)
+
+    def get_parameter_priors(self):
+        return copy.deepcopy(self._parameter_priors)
 
     def get_param_index(self, parameter_group, settings='all'):
         if settings is 'all':
@@ -621,21 +643,25 @@ class Project(object):
             self._calc_scale_factors()
             self._calc_all_residuals()
 
-        experiment_residuals = np.zeros((self._n_residuals,))
+        measurement_residuals = np.zeros((self._n_residuals,))
         res_idx = 0
         for exp_res in self._all_residuals:
             for res_block in exp_res.values():
-                experiment_residuals[res_idx:res_idx + len(res_block)] = res_block
+                measurement_residuals[res_idx:res_idx + len(res_block)] = res_block
                 res_idx += len(res_block)
 
-        if self.use_parameter_priors:
-            parameter_prior_residuals = self._calc_parameters_prior_residuals()
-            all_residuals = np.hstack((experiment_residuals, parameter_prior_residuals))
+        if self.use_parameter_priors and len(self._parameter_priors):
+            parameter_priors_residuals = self._calc_parameters_prior_residuals()
+            project_residuals = np.hstack((measurement_residuals, parameter_priors_residuals))
+
+        if self.use_scale_factors_priors and len(self._scale_factors_priors):
+            scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
+            project_residuals = np.vstack((measurement_residuals, scale_factor_priors_residuals))
 
         else:
-            all_residuals = experiment_residuals
+            project_residuals = measurement_residuals
 
-        return all_residuals
+        return project_residuals
 
     def calc_project_jacobian(self, project_param_vector):
         """
@@ -688,7 +714,7 @@ class Project(object):
         elif self._scale_factors_gradient is None:
             self._calc_scale_factors_gradient()
 
-        experiment_residuals_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
+        measurements_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
         for exp_jac, exp_sim in zip(self._model_jacobian, self._all_sims):
             for measure_name in exp_jac:
@@ -701,15 +727,19 @@ class Project(object):
                     # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 else:
                     jac = measure_sim_jac
-                experiment_residuals_jacobian[res_idx:res_idx + len(measure_sim), :] = jac
+                measurements_jacobian[res_idx:res_idx + len(measure_sim), :] = jac
                 res_idx += len(measure_sim)
 
-        if self.use_parameter_priors:
+        if self.use_parameter_priors and len(self._parameter_priors):
             parameter_priors_jacobian = self._calc_parameters_prior_jacobian()
-            project_jacobian = np.hstack((experiment_residuals_jacobian, parameter_priors_jacobian))
+            project_jacobian = np.vstack((measurements_jacobian, parameter_priors_jacobian))
+
+        if self.use_scale_factors_priors and len(self._scale_factors_priors):
+            scale_factor_priors_jacobian = self._calc_scale_factors_prior_jacobian()
+            project_jacobian = np.vstack((measurements_jacobian, scale_factor_priors_jacobian))
 
         else:
-            project_jacobian = experiment_residuals_jacobian
+            project_jacobian = measurements_jacobian
 
         return project_jacobian
 
