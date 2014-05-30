@@ -11,7 +11,6 @@ from model import ode_model
 from simple_model_settings import settings as experiment_settings
 from jittable_model import model
 from sens_jittable_model import sens_model
-import copy
 
 
 __author__ = 'Federico Vaggi'
@@ -382,8 +381,9 @@ class TestProject(TestCase):
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map)
         proj.use_scale_factors['Substrate'] = False
         proj.use_scale_factors['Product'] = False
-        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
         proj.use_parameter_priors = True
+
+        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
 
         out = geo_leastsq(proj, np.random.randn(5), jacobian=proj.calc_project_jacobian,
                           tols=[1e-6, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
@@ -402,6 +402,16 @@ class TestProject(TestCase):
         plt.plot(t_sim, sim[:, 1], 'bo')
         plt.show()
 
+        residuals = proj(out)
+        scale_priors = proj.get_scale_factor_priors()
+        param_priors = proj.get_parameter_priors()
+
+        n_param_priors = 0
+        for p in param_priors:
+            for setting in param_priors[p]:
+                n_param_priors += 1
+
+        assert (n_param_priors == 1)
 
 
 
