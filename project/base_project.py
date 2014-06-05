@@ -111,7 +111,7 @@ class Project(object):
         self._all_sims = []
         self._all_residuals = None
         self._model_jacobian = None
-        self._scale_factors = None
+        self._scale_factors = OrderedDict()
         self._scale_factors_gradient = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
@@ -585,7 +585,7 @@ class Project(object):
         self._all_sims = []
         self._all_residuals = None
         self._model_jacobian = None
-        self._scale_factors = None
+        self._scale_factors = OrderedDict()
         self._scale_factors_gradient = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
@@ -651,16 +651,14 @@ class Project(object):
                 measurement_residuals[res_idx:res_idx + len(res_block)] = res_block
                 res_idx += len(res_block)
 
+        project_residuals = measurement_residuals
         if self.use_parameter_priors and len(self._parameter_priors):
             parameter_priors_residuals = self._calc_parameters_prior_residuals()
-            project_residuals = np.hstack((measurement_residuals, parameter_priors_residuals))
+            project_residuals = np.hstack((project_residuals, parameter_priors_residuals))
 
         if self.use_scale_factors_priors and len(self._scale_factors_priors):
             scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
-            project_residuals = np.hstack((measurement_residuals, scale_factor_priors_residuals.ravel()))
-
-        else:
-            project_residuals = measurement_residuals
+            project_residuals = np.hstack((project_residuals, scale_factor_priors_residuals.ravel()))
 
         return project_residuals
 
@@ -731,18 +729,20 @@ class Project(object):
                 measurements_jacobian[res_idx:res_idx + len(measure_sim), :] = jac
                 res_idx += len(measure_sim)
 
+        project_jacobian = measurements_jacobian
         if self.use_parameter_priors and len(self._parameter_priors):
             parameter_priors_jacobian = self._calc_parameters_prior_jacobian()
-            project_jacobian = np.vstack((measurements_jacobian, parameter_priors_jacobian))
+            project_jacobian = np.vstack((project_jacobian, parameter_priors_jacobian))
 
         if self.use_scale_factors_priors and len(self._scale_factors_priors):
             scale_factor_priors_jacobian = self._calc_scale_factors_prior_jacobian()
-            project_jacobian = np.vstack((measurements_jacobian, scale_factor_priors_jacobian))
-
-        else:
-            project_jacobian = measurements_jacobian
+            project_jacobian = np.vstack((project_jacobian, scale_factor_priors_jacobian))
 
         return project_jacobian
+
+    def plot_all_experiment_simulations(self, project_param_vector):
+        pass
+
 
     def calc_rss_gradient(self, project_param_vector):
         """

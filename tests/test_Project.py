@@ -326,6 +326,15 @@ class TestProject(TestCase):
         #############################################################################################
 
         """
+        Testing since we didn't specify any parameter settings, all parameters got set as global
+        """
+        for param in proj._project_param_idx:
+            proj._project_param_idx[param]
+        assert np.allclose(residuals, np.zeros_like(residuals), atol=0.001)
+        #############################################################################################
+        #############################################################################################
+
+        """
         Testing to see that the residuals of the simulation, when using the same parameters of the ODE
         model used to generate it, are close to zero.
         """
@@ -381,11 +390,17 @@ class TestProject(TestCase):
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map)
         proj.use_scale_factors['Substrate'] = False
         proj.use_scale_factors['Product'] = False
-        proj.use_parameter_priors = True
 
+        proj.use_parameter_priors = True
         proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
 
-        out = geo_leastsq(proj, np.random.randn(5), jacobian=proj.calc_project_jacobian,
+        random_params = np.random.randn(5)
+        res = proj(random_params)
+        jac = proj.calc_project_jacobian(random_params)
+
+        assert (res.shape[0] == jac.shape[0])
+
+        out = geo_leastsq(proj, random_params, jacobian=proj.calc_project_jacobian,
                           tols=[1e-6, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
                                 -1.49012e-06, -1e3])
 
