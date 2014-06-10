@@ -589,11 +589,10 @@ class Project(object):
         self._scale_factors_gradient = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
-    def print_param_settings(self, verbose=True):
+    def print_param_settings(self):
         """
         Prints out all the parameters combinations in the project in a fancy way
         """
-
         total_params = 0
         for p_group in self._project_param_idx:
             exp_settings = self._project_param_idx[p_group].keys()
@@ -604,11 +603,13 @@ class Project(object):
                 if verbose:
                     print '%s, %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
                 total_params += 1
-            if verbose:
                 print '\n***********************'
-        if verbose:
-            print "Total Parameters: %d" % total_params
-        return total_params
+
+    def get_parameter_settings(self):
+        """
+        Returns the dictionary containing all the parameter settings, and their index in the parameter vector
+        """
+        return copy.deepcopy(self._project_param_idx)
 
     def get_ordered_project_params(self):
         project_params = []

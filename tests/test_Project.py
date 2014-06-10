@@ -1,16 +1,17 @@
 from unittest import TestCase
-
 from nose.tools import raises
+
 import numpy as np
 from statsmodels.tools.numdiff import approx_fprime
 
-from experiment import Experiment
-from measurement import TimecourseMeasurement
-from project import Project
-from model import ode_model
-from simple_model_settings import settings as experiment_settings
-from jittable_model import model
-from sens_jittable_model import sens_model
+from ..experiment import Experiment
+from ..measurement import TimecourseMeasurement
+from ..project import Project
+from ..model import ode_model
+
+from utils.simple_model_settings import settings as experiment_settings
+from utils.jittable_model import model
+from utils.sens_jittable_model import sens_model
 
 
 __author__ = 'Federico Vaggi'
@@ -292,9 +293,9 @@ class TestProject(TestCase):
         # Set Up
         #############################################################################################
         from scipy.integrate import odeint
-        from jittable_mm_model import model, ordered_params
-        from sens_jittable_mm_model import sens_model
-        from michelis_menten_model import michelis_menten
+        from utils.jittable_mm_model import model, ordered_params
+        from utils.sens_jittable_mm_model import sens_model
+        from utils.michelis_menten_model import michelis_menten
         from leastsq_mod import leastsq as geo_leastsq
         import matplotlib.pyplot as plt
 
@@ -329,8 +330,8 @@ class TestProject(TestCase):
         Testing since we didn't specify any parameter settings, all parameters got set as global
         """
         for param in proj._project_param_idx:
-            proj._project_param_idx[param]
-        assert np.allclose(residuals, np.zeros_like(residuals), atol=0.001)
+            setting = proj._project_param_idx[param].keys()[0]
+            assert (setting == 'Global')
         #############################################################################################
         #############################################################################################
 

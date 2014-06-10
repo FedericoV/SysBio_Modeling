@@ -8,9 +8,10 @@ import numpy as np
 from experiment import Experiment
 from measurement import TimecourseMeasurement
 from model import OdeModel
-from jittable_model import model
-from sens_jittable_model import sens_model
 from project import utils
+
+from utils.jittable_model import model as jitted_model
+from utils.sens_jittable_model import sens_model as jitted_sens_model
 
 
 class TestOdeModel(TestCase):
@@ -36,7 +37,7 @@ class TestOdeModel(TestCase):
         # Model
         ordered_params = ['k_deg', 'k_synt']
         n_vars = 1
-        cls.ode_model = OdeModel(model, sens_model, n_vars, ordered_params)
+        cls.ode_model = OdeModel(jitted_model, jitted_sens_model, n_vars, ordered_params)
 
     def test_get_n_vars(self):
         ode_model = TestOdeModel.ode_model
