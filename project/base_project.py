@@ -597,11 +597,9 @@ class Project(object):
         for p_group in self._project_param_idx:
             exp_settings = self._project_param_idx[p_group].keys()
             exp_settings = sorted(exp_settings)
-            if verbose:
-                print '%s  total_settings: %d ' % (p_group, len(exp_settings))
+            print '%s  total_settings: %d ' % (p_group, len(exp_settings))
             for exp_set in exp_settings:
-                if verbose:
-                    print '%s, %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
+                print '%s, %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
                 total_params += 1
                 print '\n***********************'
 
