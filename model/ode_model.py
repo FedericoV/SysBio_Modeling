@@ -27,8 +27,7 @@ class OdeModel(ModelABC):
         Whether or not to jit `sens_model` and `model` using numba
     """
 
-    def __init__(self, model, sens_model, n_vars, param_order,
-                 use_jit=True):
+    def __init__(self, model, sens_model, n_vars, param_order, use_jit=True):
         if use_jit:
             model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
             sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(sens_model)
