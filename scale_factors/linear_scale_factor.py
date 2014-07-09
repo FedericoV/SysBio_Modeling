@@ -4,7 +4,7 @@ from abstract_scale_factor import ScaleFactorABC
 import numpy as np
 import scipy
 import numba
-
+import copy
 
 ########################################################################################
 # Utility Functions
@@ -36,21 +36,22 @@ def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot
 
 class LinearScaleFactor(ScaleFactorABC):
 
-    def __init__(self, measure_names, log_prior=None, log_prior_sigma=None):
-        super(LinearScaleFactor, self).__init__(measure_names, log_prior, log_prior_sigma)
+    def __init__(self, log_prior=None, log_prior_sigma=None):
+        super(LinearScaleFactor, self).__init__(log_prior, log_prior_sigma)
+        self._sf = 1.0
 
-    def calc_sf(self, measure_iterator):
+    def update_sf(self, measure_iterator):
         sim_dot_exp = np.zeros((1,), dtype='float64')
         sim_dot_sim = np.zeros((1,), dtype='float64')
 
         for (measurement, sim, model_sens, exp_weight) in measure_iterator:
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = sim['value']
-            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
+            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, 1)
 
         self._sf = sim_dot_exp / sim_dot_sim
 
-    def calc_sf_gradient(self, measure_iterator, n_global_pars):
+    def update_sf_gradient(self, measure_iterator, n_global_pars):
         """
         Analytically calculates the jacobian of the scale factors for each measurement
         """
@@ -65,14 +66,14 @@ class LinearScaleFactor(ScaleFactorABC):
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = sim['value']
             _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                          sens_dot_exp_data, sens_dot_sim, exp_weight)
+                                          sens_dot_exp_data, sens_dot_sim, 1)
 
         _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp,
                                scale_factor_gradient)
 
         self._sf_gradient = scale_factor_gradient
 
-    def calc_scale_factor_prior_gradient(self):
+    def calc_sf_prior_gradient(self):
         """
         prior penalty is: ((log(B(theta)) - log_B_prior) / sigma_b_prior)**2
 
@@ -81,7 +82,7 @@ class LinearScaleFactor(ScaleFactorABC):
         """
         return self._sf / self._sf_gradient
 
-    def _calc_scale_factors_prior_residuals(self):
+    def calc_sf_prior_residual(self):
         """
         prior penalty is: ((log(B(theta)) - log_B_prior) / sigma_b_prior)**2
         """
@@ -110,3 +111,20 @@ class LinearScaleFactor(ScaleFactorABC):
         ans, temp = scipy.integrate.quad(_entropy_integrand, -scipy.inf, scipy.inf, args=integral_args, limit=1000)
         entropy = np.log(ans)
         return entropy
+
+    @property
+    def sf(self):
+        return self._sf
+
+    @property
+    def gradient(self):
+        return self._sf_gradient.copy()
+
+    def __repr__(self):
+        output = "SF value: %.4f\n" % self._sf
+
+        if self.log_prior is not None:
+            output += "SF log prior: %.4\nf" % self.log_prior
+            output += "SF log prior sigma: %.4f\n" % self.log_prior_sigma
+
+        return output

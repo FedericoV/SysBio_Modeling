@@ -108,7 +108,7 @@ class TestProject(TestCase):
             sim = proj._all_sims[exp_idx]['Variable_1']
             assert (np.allclose(exp_data, sim['value'], rtol=0.05))
 
-        assert (np.allclose(proj._scale_factors['Variable_1'], 3.75, rtol=0.05))
+        assert (np.allclose(proj._scale_factors['Variable_1'].sf, 3.75, rtol=0.05))
         # Excellent
 
         for exp_idx, res_block in enumerate(proj._all_residuals):
@@ -148,11 +148,11 @@ class TestProject(TestCase):
         proj = TestProject.proj
         log_project_param_vector = TestProject.log_project_param_vector
         proj.calc_project_jacobian(log_project_param_vector)
-        _scale_factors_gradient = proj._scale_factors_gradient['Variable_1']
+        _scale_factors_gradient = proj._scale_factors['Variable_1'].gradient
 
         def get_scale_factors(x):
             proj(x)
-            return proj._scale_factors['Variable_1']
+            return proj._scale_factors['Variable_1'].sf
 
         num_scale_factors = approx_fprime(log_project_param_vector, get_scale_factors, centered=True)
         assert np.allclose(_scale_factors_gradient, num_scale_factors, rtol=0.01)
@@ -179,7 +179,7 @@ class TestProject(TestCase):
                 exp_sim = sim['Variable_1']['value']
                 sims.extend(exp_sim.tolist())
             sims = np.array(sims)
-            scale = proj._scale_factors['Variable_1']
+            scale = proj._scale_factors['Variable_1'].sf
             return sims * scale
 
         num_global_jac = approx_fprime(log_project_param_vector, get_scaled_sims, centered=True)
@@ -211,10 +211,10 @@ class TestProject(TestCase):
         mod_param_vector[0] += 0.2
 
         proj(log_project_param_vector)
-        old_scale_factor = proj._scale_factors['Variable_1'].copy()
+        old_scale_factor = proj._scale_factors['Variable_1'].sf
         # Changing param vector:
         proj(mod_param_vector)
-        new_scale_factor = proj._scale_factors['Variable_1'].copy()
+        new_scale_factor = proj._scale_factors['Variable_1'].sf
 
         assert np.allclose(old_scale_factor, new_scale_factor, rtol=0.0001)
 
@@ -391,6 +391,7 @@ class TestProject(TestCase):
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map)
         proj.use_scale_factors['Substrate'] = False
         proj.use_scale_factors['Product'] = False
+        # Note - for these to work, they would have to have the same scale factor.
 
         proj.use_parameter_priors = True
         proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
@@ -411,6 +412,9 @@ class TestProject(TestCase):
 
         prod_sim = proj._all_sims[0]['Product']['value']
         prod_t = proj._all_sims[0]['Product']['timepoints']
+
+
+        #print proj.scale_factors
 
         plt.plot(sub_t, sub_sim, 'r-')
         plt.plot(t_sim, sim[:, 0], 'ro')

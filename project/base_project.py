@@ -1,45 +1,10 @@
 from collections import OrderedDict, defaultdict
+from scale_factors import LinearScaleFactor
 import warnings
 import copy
 
 import numpy as np
-import scipy
-import numba
-
 import utils
-
-
-
-
-
-
-
-########################################################################################
-# Utility Functions
-########################################################################################
-@numba.jit
-def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
-    """Copied from SloppyCell"""
-    B_centered = np.exp(u) * B_best
-    lB = u + log_B_best
-    return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
-
-
-def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
-    sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
-    sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
-
-
-def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
-                                  sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim, exp_weight=1):
-    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1) * exp_weight  # Vector
-    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1) * exp_weight  # Vector
-    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2)) * exp_weight  # Scalar
-    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2)) * exp_weight  # Scalar
-
-
-def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
-    scale_jac_out[:] = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
 
 
 class Project(object):
@@ -58,11 +23,12 @@ class Project(object):
          measurements in the experiments.
     """
 
-    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map):
+    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map, sf_type='linear'):
         # Private variables that shouldn't be carelessly modified
         self._model = model
         self._experiments = experiments  # A list of all the experiments in the project
         self._model_parameter_settings = model_parameter_settings
+        self._parameter_priors = OrderedDict()
 
         # Private variables that are modified depending on experiments in project
         self._project_param_idx = None
@@ -70,7 +36,7 @@ class Project(object):
         self._residuals_per_param = None  # How many data points do we have to constrain each parameter
         self._n_residuals = None  # How many data points do we have across all experiments
         self._measurements_idx = None  # The index of the experiments where a particular measurement is present
-        self._update_project_settings()
+        self._update_project_settings()  # This initializes all the above variables
 
         self._measurement_to_model_map = {}
         if set(self._measurements_idx.keys()) != set(measurement_to_model_map.keys()):
@@ -103,16 +69,15 @@ class Project(object):
                       'model_jac_to_measure_jac_func': jacobian_map_fcn}
             self._measurement_to_model_map[measure_name] = mapper
 
-        # Misc Constraints
-        self._scale_factors_priors = OrderedDict()
-        self._parameter_priors = OrderedDict()
+        self._scale_factors = OrderedDict()
+        for measure_name in self._measurements_idx:
+            if sf_type == 'linear':
+                self._scale_factors[measure_name] = LinearScaleFactor()
 
         # Variables modified upon simulation:
         self._all_sims = []
         self._all_residuals = None
         self._model_jacobian = None
-        self._scale_factors = OrderedDict()
-        self._scale_factors_gradient = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
         # Public variables - can modify them to change simulations.
@@ -237,7 +202,7 @@ class Project(object):
         """
         Lists all experiments that contain measurement of a particular variable
         """
-        m_idx = {}
+        m_idx = OrderedDict()
         for i, experiment in enumerate(self._experiments):
             for measurement in experiment.measurements:
                 measure_name = measurement.variable_name
@@ -283,63 +248,23 @@ class Project(object):
                                                       self._measurement_to_model_map)
             self._all_sims.append(exp_sim)
 
-    def _calc_scale_factors(self):
+    def _update_scale_factors(self):
         """
         Analytically calculates the optimal scale factor for measurements that are in arbitrary units
         """
-        self._scale_factors = OrderedDict()
-        for measure_name, experiment_list in self._measurements_idx.items():
-            if self.use_scale_factors[measure_name] is False:
-                self._scale_factors[measure_name] = 1
-                continue
+        for measure_name in self._scale_factors:
+            if self.use_scale_factors[measure_name]:
+                sf_iter = self.measure_iterator(measure_name)
+                self._scale_factors[measure_name].update_sf(sf_iter)
 
-            sim_dot_exp = np.zeros((1,), dtype='float64')
-            sim_dot_sim = np.zeros((1,), dtype='float64')
-
-            for exp_idx in experiment_list:
-                experiment = self._experiments[exp_idx]
-                exp_weight = self.experiments_weights[exp_idx]
-
-                measurement = experiment.get_variable_measurements(measure_name)
-                exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-
-                sim_data = self._all_sims[exp_idx][measure_name]['value']
-                _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
-
-            self._scale_factors[measure_name] = sim_dot_exp / sim_dot_sim
-
-    def _calc_scale_factors_gradient(self):
+    def _update_scale_factors_gradient(self):
         """
         Analytically calculates the jacobian of the scale factors for each measurement
         """
-        self._scale_factors_gradient = {}
-        n_global_pars = len(self._project_param_vector)
-        for measure_name, experiment_list in self._measurements_idx.items():
-            scale_factor_gradient = np.zeros((n_global_pars,), dtype='float64')
-
+        for measure_name in self._scale_factors:
             if self.use_scale_factors[measure_name]:
-                sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
-                sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
-                sim_dot_sim = np.zeros((1,), dtype='float64')
-                sim_dot_exp = np.zeros((1,), dtype='float64')
-
-                for exp_idx in experiment_list:
-                    experiment = self._experiments[exp_idx]
-                    exp_weight = self.experiments_weights[exp_idx]
-
-                    measurement = experiment.get_variable_measurements(measure_name)
-                    exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-
-                    sim_data = self._all_sims[exp_idx][measure_name]['value']  # Vector
-                    model_sens = self._model_jacobian[exp_idx][measure_name]  # Matrix
-
-                    _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                                  sens_dot_exp_data, sens_dot_sim, exp_weight)
-
-                _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp,
-                                       scale_factor_gradient)
-
-            self._scale_factors_gradient[measure_name] = scale_factor_gradient
+                sf_iter = self.measure_iterator(measure_name)
+                self._scale_factors[measure_name].update_sf_gradient(sf_iter, self.n_project_params)
 
     def _calc_scale_factors_prior_jacobian(self):
         """
@@ -350,20 +275,14 @@ class Project(object):
         """
         scale_factor_priors_jacobian = []
         for measure_name in self._scale_factors_priors:
-            scale_factor = self.scale_factors[measure_name]
-            scale_factor_gradient = self._scale_factors_gradient[measure_name]
-            jac = scale_factor_gradient / scale_factor
-            scale_factor_priors_jacobian.append(jac)
-
+            grad = self._scale_factors[measure_name].calc_scale_factor_prior_gradient()
+            scale_factor_priors_jacobian.append(grad)
         return np.array(scale_factor_priors_jacobian)
 
     def _calc_scale_factors_prior_residuals(self):
         scale_factor_residuals = []
         for measure_name in self._scale_factors_priors:
-            scale_factor = self.scale_factors[measure_name]
-            log_scale_factor = np.log(scale_factor)
-            log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
-            res = (log_scale_factor - log_scale_factor_prior) / log_sigma_scale_factor
+            res = self._scale_factors[measure_name].calc_scale_factors_prior_residual()
             scale_factor_residuals.append(res)
 
         return np.array(scale_factor_residuals)
@@ -402,36 +321,6 @@ class Project(object):
 
         return np.array(parameter_prior_residuals)
 
-    def _calc_scale_factor_entropy(self, measure_name, temperature):
-        """
-        Implementation taken from SloppyCell.  All credit to Sethna group, all mistakes are mine
-        """
-        if measure_name not in self._scale_factors_priors:
-            return 0
-
-        log_scale_factor_prior, log_sigma_scale_factor = self._scale_factors_priors[measure_name]
-        sim_dot_exp = np.zeros((1,), dtype='float64')
-        sim_dot_sim = np.zeros((1,), dtype='float64')
-
-        for exp_idx in self._measurements_idx[measure_name]:
-            experiment = self._experiments[exp_idx]
-            exp_weight = self.experiments_weights[exp_idx]
-            measurement = experiment.get_variable_measurements(measure_name)
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-
-            sim_data = self._all_sims[exp_idx][measure_name]['value']
-            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
-
-        optimal_scale_factor = sim_dot_exp / sim_dot_sim
-        log_optimal_scale_factor = np.log(optimal_scale_factor)
-
-        integral_args = (sim_dot_sim, sim_dot_exp, log_scale_factor_prior, log_sigma_scale_factor, temperature,
-                         optimal_scale_factor, log_optimal_scale_factor)
-        ans, temp = scipy.integrate.quad(_entropy_integrand, -scipy.inf, scipy.inf, args=integral_args, limit=1000)
-
-        entropy = np.log(ans)
-        return entropy
-
     def _calc_experiment_residuals(self, exp_idx):
         """Returns the residuals between simulations (after scaling) and experimental measurents.
         """
@@ -441,7 +330,7 @@ class Project(object):
         exp_weight = self.experiments_weights[exp_idx]
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
-            scale = self._scale_factors[measure_name]
+            scale = self._scale_factors[measure_name].sf
 
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = self._all_sims[exp_idx][measure_name]['value']
@@ -554,10 +443,9 @@ class Project(object):
             sim = self._all_sims[exp_idx][measure_name]
             try:
                 sim_jac = self._model_jacobian[exp_idx][measure_name]  # Matrix
-            except KeyError:
+            except (KeyError, TypeError):
                 sim_jac = None
             yield (measurement, sim, sim_jac, exp_weight)
-
 
     def get_experiment(self, exp_idx):
         return copy.deepcopy(self._experiments[exp_idx])
@@ -574,10 +462,15 @@ class Project(object):
         if self.use_scale_factors[measure_name] is False:
             raise ValueError("Cannot set priors on a scale factor we are not calculating")
 
-        self._scale_factors_priors[measure_name] = (log_scale_factor_prior, log_sigma_scale_factor)
+        self._scale_factors[measure_name].log_prior = log_scale_factor_prior
+        self._scale_factors[measure_name].log_prior_sigma = log_sigma_scale_factor
 
     def get_scale_factor_priors(self):
-        return copy.deepcopy(self._scale_factors_priors)
+        sf_priors = {}
+        for measure_name in self._scale_factors:
+            sf_priors[measure_name] = (self._scale_factors[measure_name].log_prior,
+                                       self._scale_factors[measure_name].log_prior_sigma)
+        return sf_priors
 
     def set_parameter_log_prior(self, parameter, parameter_setting, log_scale_parameter_prior, log_sigma_parameter):
         try:
@@ -603,8 +496,6 @@ class Project(object):
         self._all_sims = []
         self._all_residuals = None
         self._model_jacobian = None
-        self._scale_factors = OrderedDict()
-        self._scale_factors_gradient = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
     def print_param_settings(self):
@@ -658,7 +549,7 @@ class Project(object):
             self._project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
-            self._calc_scale_factors()
+            self._update_scale_factors()
             self._calc_all_residuals()
 
         measurement_residuals = np.zeros((self._n_residuals,))
@@ -717,18 +608,15 @@ class Project(object):
             self._project_param_vector = np.copy(project_param_vector)
 
             self._sim_experiments()
-            self._calc_scale_factors()
+            self._update_scale_factors()
             self._calc_all_residuals()
 
             self._calc_model_jacobian()
-            self._calc_scale_factors_gradient()
+            self._update_scale_factors_gradient()
 
         elif self._model_jacobian is None:
             self._calc_model_jacobian()
-            self._calc_scale_factors_gradient()
-
-        elif self._scale_factors_gradient is None:
-            self._calc_scale_factors_gradient()
+            self._update_scale_factors_gradient()
 
         measurements_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
@@ -736,9 +624,9 @@ class Project(object):
             for measure_name in exp_jac:
                 measure_sim = exp_sim[measure_name]['value']
                 measure_sim_jac = exp_jac[measure_name]
-                measure_scale = self._scale_factors[measure_name]
-                measure_scale_grad = self._scale_factors_gradient[measure_name]
                 if self.use_scale_factors[measure_name]:
+                    measure_scale = self._scale_factors[measure_name].sf
+                    measure_scale_grad = self._scale_factors[measure_name].gradient
                     jac = measure_sim_jac*measure_scale + measure_scale_grad.T*measure_sim[:, np.newaxis]
                     # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 else:
