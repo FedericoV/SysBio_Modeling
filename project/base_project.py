@@ -381,12 +381,16 @@ class Project(object):
                 #log_p_value = self._project_param_vector[p_idx]
                 #exp_inv = 1 / np.exp(log_p_value)
                 jac = np.zeros((self.n_project_params,))
-                jac[p_idx] = 1
+                jac[p_idx] = 1.0
                 parameter_priors_jacobian.append(jac)
 
         return np.array(parameter_priors_jacobian)
 
     def _calc_parameters_prior_residuals(self):
+        """
+        Due to internal use of OrderedDict for _parameter_priors and _parameter_priors[parameter_group] the
+        order in which the residuals and the jacobian are calculated is the same
+        """
         parameter_prior_residuals = []
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
@@ -394,7 +398,7 @@ class Project(object):
                 log_p_value = self._project_param_vector[p_idx]
                 log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
                 res = (log_p_value - log_scale_parameter_prior) / log_sigma_parameter
-                parameter_prior_residuals.append(res)  # We save the index of the parameter for sorting
+                parameter_prior_residuals.append(res)
 
         return np.array(parameter_prior_residuals)
 
@@ -542,6 +546,19 @@ class Project(object):
         if len(self._experiments) == 0:
             warnings.warn('Project has no more experiments')
 
+    def measure_iterator(self, measure_name):
+        for exp_idx in self._measurements_idx[measure_name]:
+            experiment = self._experiments[exp_idx]
+            exp_weight = self.experiments_weights[exp_idx]
+            measurement = experiment.get_variable_measurements(measure_name)
+            sim = self._all_sims[exp_idx][measure_name]
+            try:
+                sim_jac = self._model_jacobian[exp_idx][measure_name]  # Matrix
+            except KeyError:
+                sim_jac = None
+            yield (measurement, sim, sim_jac, exp_weight)
+
+
     def get_experiment(self, exp_idx):
         return copy.deepcopy(self._experiments[exp_idx])
 
@@ -569,6 +586,7 @@ class Project(object):
             raise KeyError('%s with settings %s not in the project parameters')
         if parameter not in self._parameter_priors:
             self._parameter_priors[parameter] = OrderedDict()
+            """This is an OrderedDict within an OrderedDict.  Iteration order is guaranteed to be stable"""
 
         self._parameter_priors[parameter][parameter_setting] = (log_scale_parameter_prior, log_sigma_parameter)
 
