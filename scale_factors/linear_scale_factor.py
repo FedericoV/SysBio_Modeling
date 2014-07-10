@@ -92,7 +92,7 @@ class LinearScaleFactor(ScaleFactorABC):
             return None
         return (np.log(self._sf) - self.log_prior) / self.log_prior_sigma
 
-    def _calc_scale_factor_entropy(self, measure_iterator, temperature=1.0):
+    def calc_scale_factor_entropy(self, measure_iterator, temperature=1.0):
         """
         Implementation taken from SloppyCell.  All credit to Sethna group, all mistakes are mine
         """
@@ -128,7 +128,7 @@ class LinearScaleFactor(ScaleFactorABC):
         output = "SF value: %.4f\n" % self._sf
 
         if self.log_prior is not None:
-            output += "SF log prior: %.4\nf" % self.log_prior
+            output += "SF log prior: %.4f\n" % self.log_prior
             output += "SF log prior sigma: %.4f\n" % self.log_prior_sigma
 
         return output

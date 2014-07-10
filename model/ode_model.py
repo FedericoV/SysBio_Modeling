@@ -148,7 +148,8 @@ class OdeModel(ModelABC):
                                                    measurement_to_model_map)
         return jacobian_dict
 
-    def simulate_experiment(self, project_param_vector, experiment, mapping_struct, t_sim=None, init_conditions=None):
+    def simulate_experiment(self, project_param_vector, experiment, mapping_struct, t_sim=None, init_conditions=None,
+                            return_mapped_sim=True):
         """
         Simulates the model using the `experiment` specific parameters.
 
@@ -187,9 +188,12 @@ class OdeModel(ModelABC):
             return yout
 
         model_sim = odeint(func_wrapper, init_conditions, t_sim)
+        if return_mapped_sim:
+            mapped_sim = self._map_model_sim(model_sim, experiment, mapping_struct, t_sim)
+            return mapped_sim
 
-        mapped_sim = self._map_model_sim(model_sim, experiment, mapping_struct, t_sim)
-        return mapped_sim
+        else:
+            return model_sim
 
     def _map_model_sim(self, model_sim, experiment, mapping_struct, t_sim):
         exp_sim = OrderedDict()

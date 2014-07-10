@@ -667,9 +667,23 @@ class Project(object):
 
         return project_jacobian
 
-    def plot_all_experiment_simulations(self, project_param_vector):
-        pass
+    def simulate_all_variables(self, project_param_vector, exp_subset='all'):
+        out = {}
 
+        if self._project_param_vector is None:
+            raise ValueError('Parameter vector not set')
+        if exp_subset is 'all':
+            simulated_experiments = self._experiments
+        else:
+            for exp_idx in exp_subset:
+                simulated_experiments = self._experiments[exp_idx]
+
+        for experiment in simulated_experiments:
+            exp_sim = self._model.simulate_experiment(self._project_param_vector, experiment,
+                                                      self._measurement_to_model_map, return_mapped_sim=False)
+
+            out[experiment.name] = exp_sim
+        return out
 
     def calc_rss_gradient(self, project_param_vector):
         """
@@ -831,7 +845,8 @@ class Project(object):
         entropy = 0
         for measure_name in self._measurement_to_model_map:
             if self.use_scale_factors[measure_name]:
-                entropy += temperature * self._calc_scale_factor_entropy(measure_name, temperature)
+                sf_iter = self.measure_iterator(measure_name)
+                entropy += temperature * self._scale_factors[measure_name].calc_scale_factor_entropy(sf_iter, temperature)
         return entropy
 
     def free_energy(self, project_param_vector, temperature=1):
