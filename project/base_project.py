@@ -72,9 +72,16 @@ class Project(object):
             self._measurement_to_model_map[measure_name] = mapper
 
         self._scale_factors = OrderedHashDict()
-        for measure_name in self._measurements_idx:
-            if sf_type == 'linear':
-                self._scale_factors[measure_name] = LinearScaleFactor()
+        if sf_groups is None:
+            for measure_name in self._measurements_idx:
+                if sf_type == 'linear':
+                    self._scale_factors[measure_name] = LinearScaleFactor()
+        else:
+            for measure_group in sf_groups:
+                for measure_name in measure_group:
+                    if measure_name not in self._measurements_idx:
+                        raise KeyError("%s in a scale factor group, but not in any measurements" % measure_name)
+                self._scale_factors[measure_group] = OrderedHashDict()
 
         # Variables modified upon simulation:
         self._all_sims = []
