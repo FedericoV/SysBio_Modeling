@@ -288,16 +288,17 @@ class Project(object):
         """
         scale_factor_priors_jacobian = []
         for measure_name in self._scale_factors_priors:
-            grad = self._scale_factors[measure_name].calc_scale_factor_prior_gradient()
-            scale_factor_priors_jacobian.append(grad)
+            grad = self._scale_factors[measure_name].calc_sf_prior_gradient()
+            if grad is not None:
+                scale_factor_priors_jacobian.append(grad)
         return np.array(scale_factor_priors_jacobian)
 
     def _calc_scale_factors_prior_residuals(self):
         scale_factor_residuals = []
-        for measure_name in self._scale_factors_priors:
-            res = self._scale_factors[measure_name].calc_scale_factors_prior_residual()
-            scale_factor_residuals.append(res)
-
+        for measure_name in self._scale_factors:
+            res = self._scale_factors[measure_name].calc_sf_prior_residual()
+            if res is not None:
+                scale_factor_residuals.append(res)
         return np.array(scale_factor_residuals)
 
     def _calc_parameters_prior_jacobian(self):
@@ -585,7 +586,7 @@ class Project(object):
             parameter_priors_residuals = self._calc_parameters_prior_residuals()
             project_residuals = np.hstack((project_residuals, parameter_priors_residuals))
 
-        if self.use_scale_factors_priors and len(self._scale_factors_priors):
+        if self.use_scale_factors_priors and len(self.scale_factors):
             scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
             project_residuals = np.hstack((project_residuals, scale_factor_priors_residuals.ravel()))
 
@@ -660,7 +661,7 @@ class Project(object):
             parameter_priors_jacobian = self._calc_parameters_prior_jacobian()
             project_jacobian = np.vstack((project_jacobian, parameter_priors_jacobian))
 
-        if self.use_scale_factors_priors and len(self._scale_factors_priors):
+        if self.use_scale_factors_priors and len(self.scale_factors):
             scale_factor_priors_jacobian = self._calc_scale_factors_prior_jacobian()
             project_jacobian = np.vstack((project_jacobian, scale_factor_priors_jacobian))
 

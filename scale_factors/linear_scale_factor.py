@@ -80,12 +80,16 @@ class LinearScaleFactor(ScaleFactorABC):
         derive (log(B(theta)) = 1/B(theta) * dB/dtheta
         dB/dtheta is the scale factor gradient
         """
+        if self.log_prior is None:
+            return None
         return self._sf / self._sf_gradient
 
     def calc_sf_prior_residual(self):
         """
         prior penalty is: ((log(B(theta)) - log_B_prior) / sigma_b_prior)**2
         """
+        if self.log_prior is None:
+            return None
         return (np.log(self._sf) - self.log_prior) / self.log_prior_sigma
 
     def _calc_scale_factor_entropy(self, measure_iterator, temperature=1.0):
