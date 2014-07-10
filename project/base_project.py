@@ -1,5 +1,6 @@
 from collections import OrderedDict, defaultdict
 from scale_factors import LinearScaleFactor
+from utils import OrderedHashDict
 import warnings
 import copy
 
@@ -23,7 +24,8 @@ class Project(object):
          measurements in the experiments.
     """
 
-    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map, sf_type='linear'):
+    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map, sf_type='linear',
+                 sf_groups=None):
         # Private variables that shouldn't be carelessly modified
         self._model = model
         self._experiments = experiments  # A list of all the experiments in the project
@@ -69,7 +71,7 @@ class Project(object):
                       'model_jac_to_measure_jac_func': jacobian_map_fcn}
             self._measurement_to_model_map[measure_name] = mapper
 
-        self._scale_factors = OrderedDict()
+        self._scale_factors = OrderedHashDict()
         for measure_name in self._measurements_idx:
             if sf_type == 'linear':
                 self._scale_factors[measure_name] = LinearScaleFactor()
