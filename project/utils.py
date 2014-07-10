@@ -98,10 +98,13 @@ class OrderedHashDict(OrderedDict):
                 super(OrderedHashDict, self).__setitem__(key, value)
 
             else:  # The string is the dict, either as a hashgroup or as a key
+                found = False
                 for _k in self.keys():
                     if _k == key:
                         super(OrderedHashDict, self).__setitem__(key, value)
+                        found = True
 
-                raise KeyError("%s already in dict in a hashgroup" % key)
+                if not found:
+                    raise KeyError("%s already in dict in a hashgroup" % key)
 
 

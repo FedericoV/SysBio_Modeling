@@ -81,7 +81,8 @@ class Project(object):
                 for measure_name in measure_group:
                     if measure_name not in self._measurements_idx:
                         raise KeyError("%s in a scale factor group, but not in any measurements" % measure_name)
-                self._scale_factors[measure_group] = OrderedHashDict()
+                if sf_type == 'linear':
+                    self._scale_factors[measure_group] = LinearScaleFactor()
 
         # Variables modified upon simulation:
         self._all_sims = []
@@ -91,7 +92,10 @@ class Project(object):
 
         # Public variables - can modify them to change simulations.
         self.experiments_weights = np.ones((len(experiments),))
-        self.use_scale_factors = {measure_name: True for measure_name in self._measurements_idx}
+
+        self.use_scale_factors = OrderedHashDict()
+        for measure_group in self._scale_factors:
+            self.use_scale_factors[measure_group] = True
         self.use_parameter_priors = False  # Use the parameter priors in the Jacobian calculation
         self.use_scale_factors_priors = False  # Use the scale factor priors in the Jacobian calculation
 
@@ -445,16 +449,24 @@ class Project(object):
             warnings.warn('Project has no more experiments')
 
     def measure_iterator(self, measure_name):
-        for exp_idx in self._measurements_idx[measure_name]:
-            experiment = self._experiments[exp_idx]
-            exp_weight = self.experiments_weights[exp_idx]
-            measurement = experiment.get_variable_measurements(measure_name)
-            sim = self._all_sims[exp_idx][measure_name]
-            try:
-                sim_jac = self._model_jacobian[exp_idx][measure_name]  # Matrix
-            except (KeyError, TypeError):
-                sim_jac = None
-            yield (measurement, sim, sim_jac, exp_weight)
+        if type(measure_name) is str:
+            measure_group = [measure_name]
+
+        else:
+            measure_group = list(measure_name)
+            measure_group.sort()
+
+        for measure_name in measure_group:
+            for exp_idx in self._measurements_idx[measure_name]:
+                experiment = self._experiments[exp_idx]
+                exp_weight = self.experiments_weights[exp_idx]
+                measurement = experiment.get_variable_measurements(measure_name)
+                sim = self._all_sims[exp_idx][measure_name]
+                try:
+                    sim_jac = self._model_jacobian[exp_idx][measure_name]  # Matrix
+                except (KeyError, TypeError):
+                    sim_jac = None
+                yield (measurement, sim, sim_jac, exp_weight)
 
     def get_experiment(self, exp_idx):
         return copy.deepcopy(self._experiments[exp_idx])

@@ -388,9 +388,10 @@ class TestProject(TestCase):
         measurement_to_model_map = {'Substrate': ('direct', 0), 'Product': ('direct', 1)}
 
         mm_model = ode_model.OdeModel(model, sens_model, 2, ordered_params)
-        proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map)
-        proj.use_scale_factors['Substrate'] = False
-        proj.use_scale_factors['Product'] = False
+        sf_groups = [frozenset(['Substrate', 'Product'])]
+        proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
+        #proj.use_scale_factors['Substrate'] = False
+        #proj.use_scale_factors['Product'] = False
         # Note - for these to work, they would have to have the same scale factor.
 
         proj.use_parameter_priors = True
@@ -412,6 +413,8 @@ class TestProject(TestCase):
 
         prod_sim = proj._all_sims[0]['Product']['value']
         prod_t = proj._all_sims[0]['Product']['timepoints']
+
+        assert (proj._scale_factors['Product'].sf == proj._scale_factors['Substrate'].sf)
 
 
         #print proj.scale_factors

@@ -58,8 +58,8 @@ class TestProject(TestCase):
     @raises(KeyError)
     def test_hashdict_items_present_in_set4(self):
         hashdict = OrderedHashDict()
-        hashdict['a'] = 'set'
-        hashdict[frozenset(['a', 'b'])] = 'hi'
+        hashdict['aafdadf'] = 'set'
+        hashdict[frozenset(['aafdadf', 'b'])] = 'hi'
 
     def test_hashdict_partial_duplicates(self):
         hashdict = OrderedHashDict()
@@ -82,4 +82,11 @@ class TestProject(TestCase):
             hashdict[k] = v
 
         assert (chars == hashdict.keys())
+
+    def test_overwrite_value(self):
+        hashdict = OrderedHashDict()
+        hashdict['Total'] = 5
+        hashdict['Total'] = 6
+
+        assert (hashdict['Total'] == 6)
 
