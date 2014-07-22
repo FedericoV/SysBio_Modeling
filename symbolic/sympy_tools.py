@@ -1,7 +1,5 @@
 import os
-import cPickle as pickle
 from collections import OrderedDict
-import imp
 
 from sympy import *
 
@@ -47,14 +45,14 @@ def parse_model_file(model_fh):
     return parsed_model_dict
 
 
-def write_jit_model(variables, diff_eqns, params, output_fh,
-                    sens_eqns=None, write_ordered_params=False):
+def write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, subexpressions=None,
+                    write_ordered_params=False):
     lines = []
     pad = "    "
 
     if write_ordered_params:
-        ordered_param_str = ", ".join(["'%s'" %par for par in params.keys()])
-        lines.append("ordered_params = [ %s ]" %ordered_param_str)
+        ordered_param_str = ", ".join(["'%s'" % par for par in params.keys()])
+        lines.append("ordered_params = [ %s ]" % ordered_param_str)
         lines.append("n_vars = %d" % len(variables))
         lines.append("\n")
 
@@ -85,6 +83,14 @@ def write_jit_model(variables, diff_eqns, params, output_fh,
         total_vars = len(variables)
         for idx, var in enumerate(sens_eqns.keys()):
             lines.append(pad + "%s = y[%d]" % (var, idx + total_vars))
+
+    if subexpressions is not None:
+        lines.append("\n")
+        lines.append(pad + "#---------------------------------------------------------#")
+        lines.append(pad + "#Subexpressions#")
+        lines.append(pad + "#---------------------------------------------------------#\n")
+        for expr_var, expr in enumerate(subexpressions.items()):
+            lines.append(pad + "%s = s" % (expr_var, expr))
 
     lines.append("\n")
     lines.append(pad + "#---------------------------------------------------------#")
@@ -152,8 +158,8 @@ def write_latex_file(model_fh, output_fh, extended=True):
     output_fh.close()
 
 
-def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
-                           calculate_sensitivities=True, write_ordered_params=None):
+def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, calculate_sensitivities=True,
+                           write_ordered_params=None, simplify_subexpressions=False):
     if 'module' in str(type(model_fh)):
         import inspect
         model_fh = open(inspect.getsourcefile(model_fh))
@@ -186,9 +192,8 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
     for d_var, eqn in eqns.items():
         expanded_eqns[d_var[1:]] = eqn.subs(rate_laws).subs(cons_laws).simplify()
 
+    sens_eqns = None
     if calculate_sensitivities:
-        model_dict['Sensitivity Equations'] = {}
-
         sens_eqns = OrderedDict()
         for var_i, f_i in expanded_eqns.items():
             for par_j in params.keys():
@@ -201,9 +206,20 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
                     dsens += diff(f_i, var_k) * sens_kj
 
                 sens_eqns['sens%s_%s' % (var_i, par_j)] = simplify(dsens)
-        model_dict['Sensitivity Equations'] = sens_eqns
-    else:
-        sens_eqns = None
+    model_dict['Sensitivity Equations'] = sens_eqns
+
+    subexpressions = None
+    if simplify_subexpressions:
+        all_eqns = expanded_eqns.values()
+        if sens_eqns is not None:
+            all_eqns += sens_eqns
+
+        expr_symb, exprs = cse(all_eqns, optimizations='basic')
+        subexpressions = dict(expr_symb, exprs)
+        model_dict['Differential Equations'] = exprs[:len(eqns)]
+        model_dict['Sensitivity Equations'] = exprs[len(eqns):]
+
+    model_dict['Subexpressions'] = subexpressions
 
     if write_ordered_params is None:
         if calculate_sensitivities is True:
@@ -212,6 +228,6 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None,
             write_ordered_params = True
 
     write_jit_model(variables, expanded_eqns, params, sens_model_fh,
-                    sens_eqns, write_ordered_params)
+                    sens_eqns, write_ordered_params, subexpressions)
 
     return model_dict
