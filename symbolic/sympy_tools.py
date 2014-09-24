@@ -45,8 +45,8 @@ def parse_model_file(model_fh):
     return parsed_model_dict
 
 
-def write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, subexpressions=None,
-                    write_ordered_params=False):
+def write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
+                    write_ordered_params=False, subexpressions=None):
     lines = []
     pad = "    "
 
@@ -90,7 +90,7 @@ def write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, sub
         lines.append(pad + "#Subexpressions#")
         lines.append(pad + "#---------------------------------------------------------#\n")
         for expr_var, expr in enumerate(subexpressions.items()):
-            lines.append(pad + "%s = s" % (expr_var, expr))
+            lines.append(pad + "%s = %s" % (expr[0], expr[1]))
 
     lines.append("\n")
     lines.append(pad + "#---------------------------------------------------------#")
@@ -212,12 +212,19 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, calc
     if simplify_subexpressions:
         all_eqns = expanded_eqns.values()
         if sens_eqns is not None:
-            all_eqns += sens_eqns
+            all_eqns += sens_eqns.values()
 
-        expr_symb, exprs = cse(all_eqns, optimizations='basic')
-        subexpressions = dict(expr_symb, exprs)
-        model_dict['Differential Equations'] = exprs[:len(eqns)]
-        model_dict['Sensitivity Equations'] = exprs[len(eqns):]
+        repeated_exps, simplified_eqns = cse(all_eqns, optimizations='basic')
+        subexpressions = OrderedDict(repeated_exps)
+
+        for d_var, simp_eqn in zip(expanded_eqns, simplified_eqns[:len(eqns)]):
+            expanded_eqns[d_var] = simp_eqn
+
+        for d_var, simp_eqn in zip(sens_eqns, simplified_eqns[len(eqns):]):
+            sens_eqns[d_var] = simp_eqn
+
+        model_dict['Differential Equations'] = simplified_eqns[:len(eqns)]
+        model_dict['Sensitivity Equations'] = simplified_eqns[len(eqns):]
 
     model_dict['Subexpressions'] = subexpressions
 
