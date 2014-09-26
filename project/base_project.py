@@ -152,13 +152,8 @@ class Project(object):
 
         n_params = 0
         for p in global_pars:
-            if type(p) is not tuple:
-                _project_param_idx[p] = {}
-                _project_param_idx[p]['Global'] = n_params
-            else:
-                for global_shared in p:
-                    _project_param_idx[global_shared] = {}
-                    _project_param_idx[global_shared]['Global'] = n_params
+            _project_param_idx[p] = {}
+            _project_param_idx[p]['Global'] = n_params
             n_params += 1
 
         for exp_idx, experiment in enumerate(self._experiments):
@@ -187,9 +182,13 @@ class Project(object):
                     if p in exp_fixed_pars:
                         continue  # Experiment over-writes project settings.
 
-                    settings = tuple(settings)
-                    exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
-                    # Here we get the experimental conditions for all settings upon which that parameter depends.
+                    if settings is None:
+                        exp_p_settings = 'None'
+                        # Shared Global parameter group
+                    else:
+                        settings = tuple(settings)
+                        exp_p_settings = tuple([experiment.settings[setting] for setting in settings])
+                        # Here we get the experimental conditions for all settings upon which that parameter depends.
 
                     if p_group not in _project_param_idx:
                         _project_param_idx[p_group] = {}
