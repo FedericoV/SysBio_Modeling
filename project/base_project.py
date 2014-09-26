@@ -1,10 +1,11 @@
 from collections import OrderedDict, defaultdict
-from scale_factors import LinearScaleFactor
-from utils import OrderedHashDict
 import warnings
 import copy
 
 import numpy as np
+
+from scale_factors import LinearScaleFactor
+from utils import OrderedHashDict
 import utils
 
 
@@ -151,8 +152,13 @@ class Project(object):
 
         n_params = 0
         for p in global_pars:
-            _project_param_idx[p] = {}
-            _project_param_idx[p]['Global'] = n_params
+            if type(p) is not tuple:
+                _project_param_idx[p] = {}
+                _project_param_idx[p]['Global'] = n_params
+            else:
+                for global_shared in p:
+                    _project_param_idx[global_shared] = {}
+                    _project_param_idx[global_shared]['Global'] = n_params
             n_params += 1
 
         for exp_idx, experiment in enumerate(self._experiments):
