@@ -4,9 +4,9 @@ import copy
 
 import numpy as np
 
-from scale_factors import LinearScaleFactor
-from utils import OrderedHashDict
-import utils
+from ..scale_factors import LinearScaleFactor
+from .utils import OrderedHashDict
+from . import utils
 
 
 class Project(object):
@@ -292,7 +292,7 @@ class Project(object):
         dB/dtheta is the scale factor gradient
         """
         scale_factor_priors_jacobian = []
-        for measure_name in self._scale_factors_priors:
+        for measure_name in self._scale_factors:
             grad = self._scale_factors[measure_name].calc_sf_prior_gradient()
             if grad is not None:
                 scale_factor_priors_jacobian.append(grad)
