@@ -255,11 +255,14 @@ class Project(object):
 
         if self._project_param_vector is None:
             raise ValueError('Parameter vector not set')
+
+        simulated_experiments = []
+
         if exp_subset is 'all':
             simulated_experiments = self._experiments
         else:
             for exp_idx in exp_subset:
-                simulated_experiments = self._experiments[exp_idx]
+                simulated_experiments.append(self._experiments[exp_idx])
 
         for experiment in simulated_experiments:
             exp_sim = self._model.simulate_experiment(self._project_param_vector, experiment,
@@ -299,12 +302,12 @@ class Project(object):
         return np.array(scale_factor_priors_jacobian)
 
     def _calc_scale_factors_prior_residuals(self):
-        scale_factor_residuals = []
+        sf_residuals = []
         for measure_name in self._scale_factors:
             res = self._scale_factors[measure_name].calc_sf_prior_residual()
             if res is not None:
-                scale_factor_residuals.append(res)
-        return np.array(scale_factor_residuals)
+                sf_residuals.append(res)
+        return np.array(sf_residuals)
 
     def _calc_parameters_prior_jacobian(self):
         """
@@ -330,31 +333,35 @@ class Project(object):
         order in which the residuals and the jacobian are calculated is the same
         """
         parameter_prior_residuals = []
+
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
                 p_idx = self._project_param_idx[parameter_group][setting]
                 log_p_value = self._project_param_vector[p_idx]
-                log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
-                res = (log_p_value - log_scale_parameter_prior) / log_sigma_parameter
+                log_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
+                res = (log_p_value - log_parameter_prior) / log_sigma_parameter
                 parameter_prior_residuals.append(res)
 
         return np.array(parameter_prior_residuals)
 
     def _calc_experiment_residuals(self, exp_idx):
-        """Returns the residuals between simulations (after scaling) and experimental measurents.
+        """Returns the residuals between simulations (after scaling) and experimental measurement.
         """
         residuals = OrderedDict()
         experiment = self._experiments[exp_idx]
 
-        exp_weight = self.experiments_weights[exp_idx]
+        # exp_weight = self.experiments_weights[exp_idx]
+        # TODO: Make exp weights usable
+
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
-            scale = self._scale_factors[measure_name].sf
+            sf = self._scale_factors[measure_name].sf
 
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = self._all_sims[exp_idx][measure_name]['value']
 
-            residuals[measure_name] = (sim_data * scale - exp_data) / exp_std
+            residuals[measure_name] = (sim_data * sf - exp_data) / exp_std
+
         return residuals
 
     def _calc_all_residuals(self):
@@ -652,9 +659,9 @@ class Project(object):
                 measure_sim = exp_sim[measure_name]['value']
                 measure_sim_jac = exp_jac[measure_name]
                 if self.use_scale_factors[measure_name]:
-                    measure_scale = self._scale_factors[measure_name].sf
-                    measure_scale_grad = self._scale_factors[measure_name].gradient
-                    jac = measure_sim_jac*measure_scale + measure_scale_grad.T*measure_sim[:, np.newaxis]
+                    sf = self._scale_factors[measure_name].sf
+                    sf_grad = self._scale_factors[measure_name].gradient
+                    jac = measure_sim_jac * sf + sf_grad.T * measure_sim[:, np.newaxis]
                     # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 else:
                     jac = measure_sim_jac
@@ -667,26 +674,29 @@ class Project(object):
             project_jacobian = np.vstack((project_jacobian, parameter_priors_jacobian))
 
         if self.use_scale_factors_priors and len(self.scale_factors):
-            scale_factor_priors_jacobian = self._calc_scale_factors_prior_jacobian()
-            project_jacobian = np.vstack((project_jacobian, scale_factor_priors_jacobian))
+            sf_priors_jacobian = self._calc_scale_factors_prior_jacobian()
+            project_jacobian = np.vstack((project_jacobian, sf_priors_jacobian))
 
         return project_jacobian
 
     def simulate_all_variables(self, project_param_vector, exp_subset='all'):
         out = {}
 
-        if self._project_param_vector is None:
-            raise ValueError('Parameter vector not set')
+        if not np.alltrue(project_param_vector == self._project_param_vector):
+            self.reset_calcs()
+            self._project_param_vector = np.copy(project_param_vector)
+
+        simulated_experiments = []
+
         if exp_subset is 'all':
             simulated_experiments = self._experiments
         else:
             for exp_idx in exp_subset:
-                simulated_experiments = self._experiments[exp_idx]
+                simulated_experiments.append(self._experiments[exp_idx])
 
         for experiment in simulated_experiments:
             exp_sim = self._model.simulate_experiment(self._project_param_vector, experiment,
                                                       self._measurement_to_model_map, return_mapped_sim=False)
-
             out[experiment.name] = exp_sim
         return out
 
@@ -851,7 +861,8 @@ class Project(object):
         for measure_name in self._measurement_to_model_map:
             if self.use_scale_factors[measure_name]:
                 sf_iter = self.measure_iterator(measure_name)
-                entropy += temperature * self._scale_factors[measure_name].calc_scale_factor_entropy(sf_iter, temperature)
+                entropy += temperature * self._scale_factors[measure_name].calc_scale_factor_entropy(sf_iter,
+                                                                                                     temperature)
         return entropy
 
     def free_energy(self, project_param_vector, temperature=1):
@@ -863,5 +874,3 @@ class Project(object):
         j = self.calc_project_jacobian(project_param_vector)
         h = np.dot(j.T, j)
         return h
-
-
