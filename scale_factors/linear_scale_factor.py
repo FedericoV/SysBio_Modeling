@@ -53,7 +53,7 @@ class LinearScaleFactor(ScaleFactorABC):
 
     def update_sf_gradient(self, measure_iterator, n_global_pars):
         """
-        Analytically calculates the jacobian of the scale factors for each measurement
+        Analytically calculates the gradient of the scale factors for each measurement
         """
 
         scale_factor_gradient = np.zeros((n_global_pars,), dtype='float64')
@@ -82,7 +82,7 @@ class LinearScaleFactor(ScaleFactorABC):
         """
         if self.log_prior is None:
             return None
-        return self._sf / self._sf_gradient
+        return self._sf_gradient / self._sf
 
     def calc_sf_prior_residual(self):
         """
