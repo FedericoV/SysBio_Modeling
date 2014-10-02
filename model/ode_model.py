@@ -2,8 +2,8 @@ from collections import OrderedDict
 
 import numpy as np
 import numba
-from scipy.integrate import odeint
 
+from scipy.integrate import odeint
 from abstract_model import ModelABC
 
 
@@ -27,11 +27,18 @@ class OdeModel(ModelABC):
         Whether or not to jit `sens_model` and `model` using numba
     """
 
-    def __init__(self, model, sens_model, n_vars, param_order, use_jit=True):
+    def __init__(self, model, sens_model, n_vars, param_order, model_name="Model",
+                 use_jit=True):
+        self._unjitted_model = model  # Keep unjitted version just in case
+        self._unjitted_sens_model = sens_model
         if use_jit:
             model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
             sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(sens_model)
-        super(OdeModel, self).__init__(model, n_vars)
+            self._jit_enabled = True
+        else:
+            self._jit_enabled = False
+
+        super(OdeModel, self).__init__(model, n_vars, model_name)
         self.sens_model = sens_model
         self.param_order = param_order
 
@@ -39,6 +46,15 @@ class OdeModel(ModelABC):
         return self._n_vars
 
     n_vars = property(get_n_vars)
+
+    def enable_jit(self):
+        if self._jit_enabled:
+            print "Model is already JIT'ed using Numba"
+        else:
+            self._model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
+            self.sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self.sens_model)
+            self._jit_enabled = True
+
 
     def _jacobian_sim_to_dict(self, project_param_vector, jacobian_sim, t_sim, experiment, mapping_struct):
         """
