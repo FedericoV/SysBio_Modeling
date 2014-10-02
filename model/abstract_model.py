@@ -5,9 +5,10 @@ class ModelABC(object):
     __metaclass__ = ABCMeta
 
     @abstractmethod
-    def __init__(self, model, n_vars):
+    def __init__(self, model, n_vars, model_name):
         self._model = model
         self._n_vars = n_vars
+        self.model_name = model_name
 
     @abstractmethod
     def simulate_experiment(self, project_param_vector, t_sim, experiment):
