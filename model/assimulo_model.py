@@ -1,31 +1,41 @@
 __author__ = 'Federico Vaggi'
 
-from ode_model import OdeModel
-
-
-class AssimuloModel(OdeModel):
-    def __init__(self, model, n_vars, param_order):
-        super(OdeModel, self).__init__(model, n_vars)
-        self.param_order = param_order
-
-### Have to put all this in somehow:
-
 import numpy as np
+import numba
 from assimulo.problem import Explicit_Problem
 from assimulo.solvers.sundials import CVodeError
 from assimulo.exception import TimeLimitExceeded
 
 
-class p53_assimulo_sim(Explicit_Problem):
-    def __init__(self, y0, p0, p53_exp, odeint_fcn=None):
+from abstract_model import ModelABC
+
+
+class p53_assimulo_sim(Explicit_Problem, ModelABC):
+    def __init__(self, model, n_vars, param_order, y0, p0, model_name="Model", use_jit=True):
 
         Explicit_Problem.__init__(self, y0=y0, p0=p0)
 
-        self.conditions = p53_exp.conditions
-        self.set_param_order(p53_exp)
+        self._unjitted_model = model  # Keep unjitted version just in case
+        if use_jit:
+            model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
+            self._jit_enabled = True
+        else:
+            self._jit_enabled = False
 
-        self.odeint_fcn = odeint_fcn
-        # Has to follow the Assimulo model signature
+        self.param_order = param_order
+        ModelABC, self.__init__(model, n_vars, model_name)
+
+    def get_n_vars(self):
+        return self._n_vars
+
+    n_vars = property(get_n_vars)
+
+    def enable_jit(self):
+        if self._jit_enabled:
+            print "Model is already JIT'ed using Numba"
+        else:
+            self._model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
+            self._jit_enabled = True
 
     def set_param_order(self, p53_exp):
         param_global_vector_idx = p53_exp.param_global_vector_idx

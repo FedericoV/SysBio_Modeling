@@ -55,43 +55,6 @@ class OdeModel(ModelABC):
             self.sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self.sens_model)
             self._jit_enabled = True
 
-
-    def _jacobian_sim_to_dict(self, project_param_vector, jacobian_sim, t_sim, experiment, mapping_struct):
-        """
-        Map the jacobian with respect to model parameters to the jacobian with respect to the global parameters
-        """
-
-        n_vars = self.n_vars
-        model_jac = jacobian_sim[:, n_vars:]
-        # There are n_var state variables + n_vars * n_exp_params sensitivity variables.
-        transformed_params_deriv = OdeModel.param_transform_derivative(project_param_vector)
-
-        jacobian_dict = OrderedDict()
-        for measurement in experiment.measurements:
-            measure_name = measurement.variable_name
-            model_jac_to_measure_func = mapping_struct[measure_name]['model_jac_to_measure_jac_func']
-            mapping_parameters = mapping_struct[measure_name]['parameters']
-            measure_jac = model_jac_to_measure_func(model_jac, t_sim, experiment, measurement, mapping_parameters)
-
-            var_jacobian = np.zeros((measure_jac.shape[0], len(project_param_vector)))
-
-            for p_model_idx, p_name in enumerate(self.param_order):
-                # p_model_idx is the index of a parameter in the model
-                # p_name is the name of the parameter
-                try:
-                    p_project_idx = experiment.param_global_vector_idx[p_name]
-                    # g_idx is the index of a parameter in the global vector
-                except KeyError:
-                    if p_name not in experiment.fixed_parameters:
-                        raise KeyError('%s not in %s fixed parameters.')
-                    else:
-                        continue
-                        # We don't calculate the jacobian wrt fixed parameters.
-                var_jacobian[:, p_project_idx] += measure_jac[:, p_model_idx]
-            jacobian_dict[measurement.variable_name] = var_jacobian * transformed_params_deriv
-
-        return jacobian_dict
-
     def _global_to_experiment_params(self, project_param_vector, experiment):
         """
         Extracts the experiment-specific parameters from the global parameter vector.
@@ -108,7 +71,7 @@ class OdeModel(ModelABC):
             exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
-    def calc_jacobian(self, project_param_vector, experiment, measurement_to_model_map, t_sim=None,
+    def calc_jacobian(self, experiment_params, t_sim=None,
                       init_conditions=None):
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
@@ -140,17 +103,10 @@ class OdeModel(ModelABC):
         The jacobian with respect to global parameters that aren't in the experiment will thus be zero.
         """
 
-        transformed_params = OdeModel.param_transform(project_param_vector)
-        experiment_params = self._global_to_experiment_params(transformed_params, experiment)
-
-        n_exp_params = len(experiment.param_global_vector_idx)
-        n_vars = self._n_vars
+        experiment_params = OdeModel.param_transform(experiment_params)
 
         if init_conditions is None:
-            init_conditions = np.zeros((n_vars + n_exp_params * n_vars,))
-        if t_sim is None:
-            t_end = experiment.get_unique_timepoints()[-1]
-            t_sim = np.linspace(0, t_end, 1000)
+            init_conditions = np.zeros((self.n_vars + len(experiment_params) * self.n_vars,))
 
         yout = np.zeros_like(init_conditions)
 
@@ -160,12 +116,9 @@ class OdeModel(ModelABC):
 
         jacobian_sim = odeint(func_wrapper, init_conditions, t_sim)
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
-        jacobian_dict = self._jacobian_sim_to_dict(project_param_vector, jacobian_sim, t_sim, experiment,
-                                                   measurement_to_model_map)
-        return jacobian_dict
+        return jacobian_sim
 
-    def simulate_experiment(self, project_param_vector, experiment, mapping_struct, t_sim=None, init_conditions=None,
-                            return_mapped_sim=True):
+    def simulate_experiment(self, experiment_params, t_sim=None, init_conditions=None):
         """
         Simulates the model using the `experiment` specific parameters.
 
@@ -190,13 +143,8 @@ class OdeModel(ModelABC):
         """
         if init_conditions is None:
             init_conditions = np.zeros((self._n_vars,))
-        if t_sim is None:
-            t_end = experiment.get_unique_timepoints()[-1]
-            t_sim = np.linspace(0, t_end, 1000)
 
-        transformed_params = OdeModel.param_transform(project_param_vector)
-        experiment_params = self._global_to_experiment_params(transformed_params, experiment)
-
+        experiment_params = OdeModel.param_transform(experiment_params)
         yout = np.zeros_like(init_conditions)
 
         def func_wrapper(y, t):
@@ -204,28 +152,9 @@ class OdeModel(ModelABC):
             return yout
 
         model_sim = odeint(func_wrapper, init_conditions, t_sim)
-        if return_mapped_sim:
-            mapped_sim = self._map_model_sim(model_sim, experiment, mapping_struct, t_sim)
-            return mapped_sim
 
-        else:
-            return model_sim
+        return model_sim
 
-    def _map_model_sim(self, model_sim, experiment, mapping_struct, t_sim):
-        exp_sim = OrderedDict()
-
-        for measurement in experiment.measurements:
-            measure_name = measurement.variable_name
-            model_variables_to_measure_func = mapping_struct[measure_name]['model_variables_to_measure_func']
-            mapping_parameters = mapping_struct[measure_name]['parameters']
-
-            exp_sim[measure_name] = {}
-            measure_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
-                                                                     mapping_parameters)
-
-            exp_sim[measure_name]['value'] = measure_sim
-            exp_sim[measure_name]['timepoints'] = t_sim[exp_t_idx]
-        return exp_sim
 
     @staticmethod
     def param_transform(project_param_vector):

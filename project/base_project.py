@@ -5,6 +5,7 @@ import copy
 import numpy as np
 
 from ..scale_factors import LinearScaleFactor
+from ..model import OdeModel
 from .utils import OrderedHashDict
 from . import utils
 
@@ -250,6 +251,43 @@ class Project(object):
     # Private Simulation Methods
     ##########################################################################################################
 
+    def _get_experiment_parameters(self, experiment):
+        """
+        Extracts the experiment-specific parameters from the project parameter vector
+        """
+        m = self._model
+        exp_param_vector = np.zeros((len(m.param_order),))
+        for p_model_idx, p_name in enumerate(m.param_order):
+            try:
+                global_idx = experiment.param_global_vector_idx[p_name]
+                param_value = self._project_param_vector[global_idx]
+            except KeyError:
+                param_value = experiment.fixed_parameters[p_name]
+                # If it's not an optimized parameter, it must be fixed by experiment
+            exp_param_vector[p_model_idx] = param_value
+        return exp_param_vector
+
+    def _map_model_sim_to_measures(self, model_sim, t_sim, experiment):
+        """
+        Maps a model simulation to a particular measurement.  This is necessary because not all model variables
+        map cleanly to a single measurement.
+        """
+        measure_sim = OrderedDict()
+
+        for measurement in experiment.measurements:
+            measure_name = measurement.variable_name
+            mapping_struct = self._measurement_to_model_map[measure_name]
+            model_variables_to_measure_func = mapping_struct['model_variables_to_measure_func']
+            mapping_parameters = mapping_struct['parameters']
+
+            measure_sim[measure_name] = {}
+            measure_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
+                                                                     mapping_parameters)
+
+            measure_sim[measure_name]['value'] = measure_sim
+            measure_sim[measure_name]['timepoints'] = t_sim[exp_t_idx]
+        return measure_sim
+
     def _sim_experiments(self, exp_subset='all'):
         """
         Simulates all the experiments in the project.
@@ -267,9 +305,103 @@ class Project(object):
                 simulated_experiments.append(self._experiments[exp_idx])
 
         for experiment in simulated_experiments:
-            exp_sim = self._model.simulate_experiment(self._project_param_vector, experiment,
-                                                      self._measurement_to_model_map)
-            self._all_sims.append(exp_sim)
+            experiment_parameters = self._get_experiment_parameters(experiment)
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+            model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
+            mapped_sim = self._map_model_sim_to_measures(model_sim, t_sim, experiment)
+            self._all_sims.append(mapped_sim)
+
+    def _calc_experiment_residuals(self, exp_idx):
+        """Returns the residuals between simulations (after scaling) and experimental measurement.
+        """
+        residuals = OrderedDict()
+        experiment = self._experiments[exp_idx]
+
+        # exp_weight = self.experiments_weights[exp_idx]
+        # TODO: Make exp weights usable
+
+        for measurement in experiment.measurements:
+            measure_name = measurement.variable_name
+            sf = self._scale_factors[measure_name].sf
+
+            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
+            sim_data = self._all_sims[exp_idx][measure_name]['value']
+
+            residuals[measure_name] = (sim_data * sf - exp_data) / exp_std
+
+        return residuals
+
+    def _calc_all_residuals(self):
+        """
+        Calculates residuals between the simulations, scaled by the scaling factor and the simulations.
+        Has to be called after simulations and scaling factors are calculated
+        """
+        _all_residuals = []
+        for exp_idx, experiment in enumerate(self._experiments):
+            exp_res = self._calc_experiment_residuals(exp_idx)
+            _all_residuals.append(exp_res)
+        self._all_residuals = _all_residuals
+
+    ##########################################################################################################
+    # Sensitivity Methods
+    ##########################################################################################################
+
+    def _calc_model_jacobian(self):
+        all_jacobians = []
+        for experiment in self._experiments:
+            if self._project_param_vector is None:
+                raise ValueError('Parameter vector not set')
+            model_jacobian = self._model.calc_jacobian(self._project_param_vector,
+                                                       experiment, self._measurement_to_model_map)
+            project_jacobian_dict = self._model_jacobian_to_project_jacobian(model_jacobian)
+            all_jacobians.append(project_jacobian_dict)
+
+        self._model_jacobian = all_jacobians
+
+    def _model_jacobian_to_project_jacobian(self, jacobian_sim, t_sim, experiment, experiment_params):
+        """
+        Map the jacobian with respect to model parameters to the jacobian with respect to the global parameters
+        """
+        m = self._model
+        n_vars = m.n_vars
+
+        model_jac = jacobian_sim[:, n_vars:]
+        # There are n_var state variables + n_vars * n_exp_params sensitivity variables.
+        transformed_params_deriv = OdeModel.param_transform_derivative(experiment_params)
+
+        jacobian_dict = OrderedDict()
+        for measurement in experiment.measurements:
+            measure_name = measurement.variable_name
+
+            # We convert the model state jacobian to measure variables
+            mapping_struct = self._measurement_to_model_map[measure_name]
+            model_jac_to_measure_func = mapping_struct['model_jac_to_measure_jac_func']
+            mapping_parameters = mapping_struct['parameters']
+            measure_jac = model_jac_to_measure_func(model_jac, t_sim, experiment, measurement, mapping_parameters)
+
+            var_jacobian = np.zeros((measure_jac.shape[0], len(self._project_param_vector)))
+
+            for p_model_idx, p_name in enumerate(self.param_order):
+                # p_model_idx is the index of the parameter in the model
+                # p_name is the name of the parameter
+                try:
+                    p_project_idx = experiment.param_global_vector_idx[p_name]
+                    # p_project_idx is the index of a parameter in the project vector
+                except KeyError:
+                    if p_name not in experiment.fixed_parameters:
+                        raise KeyError('%s not in %s fixed parameters.')
+                    else:
+                        continue
+                        # We don't calculate the jacobian wrt fixed parameters.
+                var_jacobian[:, p_project_idx] += measure_jac[:, p_model_idx]
+            jacobian_dict[measurement.variable_name] = var_jacobian * transformed_params_deriv
+
+        return jacobian_dict
+
+    ##########################################################################################################
+    # Scale Factor Methods
+    ##########################################################################################################
 
     def _update_scale_factors(self):
         """
@@ -311,6 +443,10 @@ class Project(object):
                 sf_residuals.append(res)
         return np.array(sf_residuals)
 
+    ##########################################################################################################
+    # Parameter Priors
+    ##########################################################################################################
+
     def _calc_parameters_prior_jacobian(self):
         """
         Since all parameters are already in logspace, and the priors are all in log space:
@@ -345,47 +481,6 @@ class Project(object):
                 parameter_prior_residuals.append(res)
 
         return np.array(parameter_prior_residuals)
-
-    def _calc_experiment_residuals(self, exp_idx):
-        """Returns the residuals between simulations (after scaling) and experimental measurement.
-        """
-        residuals = OrderedDict()
-        experiment = self._experiments[exp_idx]
-
-        # exp_weight = self.experiments_weights[exp_idx]
-        # TODO: Make exp weights usable
-
-        for measurement in experiment.measurements:
-            measure_name = measurement.variable_name
-            sf = self._scale_factors[measure_name].sf
-
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = self._all_sims[exp_idx][measure_name]['value']
-
-            residuals[measure_name] = (sim_data * sf - exp_data) / exp_std
-
-        return residuals
-
-    def _calc_all_residuals(self):
-        """
-        Calculates residuals between the simulations, scaled by the scaling factor and the simulations.
-        Has to be called after simulations and scaling factors are calculated
-        """
-        _all_residuals = []
-        for exp_idx, experiment in enumerate(self._experiments):
-            exp_res = self._calc_experiment_residuals(exp_idx)
-            _all_residuals.append(exp_res)
-        self._all_residuals = _all_residuals
-
-    def _calc_model_jacobian(self):
-        all_jacobians = []
-        for experiment in self._experiments:
-            if self._project_param_vector is None:
-                raise ValueError('Parameter vector not set')
-            exp_jacobian = self._model.calc_jacobian(self._project_param_vector,
-                                                     experiment, self._measurement_to_model_map)
-            all_jacobians.append(exp_jacobian)
-        self._model_jacobian = all_jacobians
 
     ##########################################################################################################
     # Public API
