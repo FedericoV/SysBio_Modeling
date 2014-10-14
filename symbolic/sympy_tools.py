@@ -4,6 +4,34 @@ from collections import OrderedDict
 from sympy import *
 
 
+def generate_sensitivity_equations(equations, params):
+    sens_eqns = OrderedDict()
+    for var_i, f_i in equations.items():
+        for par_j in params.keys():
+            if params[par_j] == 'fixed':
+                # We don't calculate sensitivity wrt fixed parameters
+                continue
+            dsens = diff(f_i, par_j)
+            for var_k in equations.keys():
+                sens_kj = Symbol('sens%s_%s' % (var_k, par_j))
+                dsens += diff(f_i, var_k) * sens_kj
+
+            sens_eqns['sens%s_%s' % (var_i, par_j)] = simplify(dsens)
+
+    return sens_eqns
+
+
+def generate_model_jacobian(equations):
+    jacobian_equations = OrderedDict()
+    for var_i, f_i in equations.items():
+        for var_j in equations.keys():
+            dfi_dj = Symbol('d%s_d%s' % (var_i, var_j))
+            jacobian_equations[dfi_dj] = diff(f_i, var_j)
+
+    return jacobian_equations
+
+
+
 def _process_chunk(chunk, sympify_rhs=False):
     symbols_dict = OrderedDict()
 
@@ -24,28 +52,7 @@ def _process_chunk(chunk, sympify_rhs=False):
     return symbols_dict
 
 
-def parse_model_file(model_fh):
-    model_text = model_fh.read()
-
-    categories = {'Parameters': False, 'Variables': False,
-                  'Conservation Laws': True, 'Rate Laws': True,
-                  'Differential Equations': True}
-
-    parsed_model_dict = {}
-
-    for category, sympify_rhs in categories.items():
-        start_idx = model_text.find("#*! %s Start" % category)
-        end_idx = model_text.find("#*! %s End" % category)
-
-        chunk = model_text[start_idx:end_idx].split('\n')
-        symbols_dict = _process_chunk(chunk, sympify_rhs)
-
-        parsed_model_dict[category] = symbols_dict
-
-    return parsed_model_dict
-
-
-def write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
+def _write_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
                     write_ordered_params=False, subexpressions=None):
     lines = []
     pad = "    "
@@ -111,10 +118,11 @@ def write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
 
     for line in lines:
         output_fh.write(line + "\n")
+        # Actually write out the model
 
 
 def write_latex_file(model_fh, output_fh, extended=True):
-    '''Currently incomplete'''
+    """Currently incomplete"""
     model_dict = parse_model_file(model_fh)
     model_fh.close()
 
@@ -158,8 +166,30 @@ def write_latex_file(model_fh, output_fh, extended=True):
     output_fh.close()
 
 
-def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, calculate_sensitivities=True,
-                           write_ordered_params=None, simplify_subexpressions=False):
+def parse_model_file(model_fh):
+    model_text = model_fh.read()
+
+    categories = {'Parameters': False, 'Variables': False,
+                  'Conservation Laws': True, 'Rate Laws': True,
+                  'Differential Equations': True}
+
+    parsed_model_dict = {}
+
+    for category, sympify_rhs in categories.items():
+        start_idx = model_text.find("#*! %s Start" % category)
+        end_idx = model_text.find("#*! %s End" % category)
+
+        chunk = model_text[start_idx:end_idx].split('\n')
+        symbols_dict = _process_chunk(chunk, sympify_rhs)
+
+        parsed_model_dict[category] = symbols_dict
+
+    return parsed_model_dict
+
+
+def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_sensitivities=True,
+                           write_ordered_params=None, simplify_subexpressions=False, make_model_jacobian=True):
+
     if 'module' in str(type(model_fh)):
         import inspect
         model_fh = open(inspect.getsourcefile(model_fh))
@@ -183,32 +213,35 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, calc
 
     if fixed_params is not None:
         for f_p in fixed_params:
-            if f_p in params:
+            try:
                 params[f_p] = 'fixed'
-            else:
-                print '%s not in model parameters' % f_p
+            except KeyError:
+                raise KeyError('%s not in model parameters' % f_p)
 
     expanded_eqns = OrderedDict()
     for d_var, eqn in eqns.items():
         expanded_eqns[d_var[1:]] = eqn.subs(rate_laws).subs(cons_laws).simplify()
 
+    # Sensitivity Equations
     sens_eqns = None
-    if calculate_sensitivities:
-        sens_eqns = OrderedDict()
-        for var_i, f_i in expanded_eqns.items():
-            for par_j in params.keys():
-                if params[par_j] == 'fixed':
-                    # We don't calculate sensitivity wrt fixed parameters
-                    continue
-                dsens = diff(f_i, par_j)
-                for var_k in expanded_eqns.keys():
-                    sens_kj = Symbol('sens%s_%s' % (var_k, par_j))
-                    dsens += diff(f_i, var_k) * sens_kj
-
-                sens_eqns['sens%s_%s' % (var_i, par_j)] = simplify(dsens)
+    if make_model_sensitivities:
+        sens_eqns = generate_sensitivity_equations(expanded_eqns, params)
     model_dict['Sensitivity Equations'] = sens_eqns
 
-    subexpressions = None
+
+    # Model Jacobian
+    model_jac_eqns = None
+    if make_model_jacobian:
+        model_jac_eqns = generate_model_jacobian(expanded_eqns)
+    model_dict['Model Jacobian Equations'] = model_jac_eqns
+
+    sens_model_jac_eqns = None
+    if sens_eqns and make_model_jacobian:
+        sens_model_jac_eqns = generate_model_jacobian(sens_eqns)
+    model_dict['Model Sensitivity Jacobian Equations'] = sens_model_jac_eqns
+
+
+
     if simplify_subexpressions:
         all_eqns = expanded_eqns.values()
         if sens_eqns is not None:
