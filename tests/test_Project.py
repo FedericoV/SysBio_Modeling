@@ -9,9 +9,9 @@ from ..measurement import TimecourseMeasurement
 from ..project import Project
 from ..model import ode_model
 
-from utils.simple_model_settings import settings as experiment_settings
-from utils.jittable_model import model
-from utils.sens_jittable_model import sens_model
+from test_utils.simple_model_settings import settings as experiment_settings
+from test_utils.jittable_model import model
+from test_utils.sens_jittable_model import sens_model
 
 
 __author__ = 'Federico Vaggi'
@@ -293,9 +293,9 @@ class TestProject(TestCase):
         # Set Up
         #############################################################################################
         from scipy.integrate import odeint
-        from utils.jittable_mm_model import model, ordered_params
-        from utils.sens_jittable_mm_model import sens_model
-        from utils.michelis_menten_model import michelis_menten
+        from test_utils.jittable_mm_model import model, ordered_params
+        from test_utils.sens_jittable_mm_model import sens_model
+        from test_utils.michelis_menten_model import michelis_menten
         from leastsq_mod import leastsq as geo_leastsq
         import matplotlib.pyplot as plt
 

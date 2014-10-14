@@ -4,8 +4,8 @@ import copy
 
 import numpy as np
 
-from ..scale_factors import LinearScaleFactor
-from ..model import OdeModel
+from scale_factors import LinearScaleFactor
+from model import OdeModel
 from .utils import OrderedHashDict
 from . import utils
 
@@ -102,6 +102,8 @@ class Project(object):
             self.use_scale_factors[measure_group] = True
         self.use_parameter_priors = False  # Use the parameter priors in the Jacobian calculation
         self.use_scale_factors_priors = False  # Use the scale factor priors in the Jacobian calculation
+
+        self.caching = True
 
     ##########################################################################################################
     # Methods that update private variables
@@ -272,7 +274,7 @@ class Project(object):
         Maps a model simulation to a particular measurement.  This is necessary because not all model variables
         map cleanly to a single measurement.
         """
-        measure_sim = OrderedDict()
+        measure_sim_dict = OrderedDict()
 
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
@@ -280,13 +282,13 @@ class Project(object):
             model_variables_to_measure_func = mapping_struct['model_variables_to_measure_func']
             mapping_parameters = mapping_struct['parameters']
 
-            measure_sim[measure_name] = {}
-            measure_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
-                                                                     mapping_parameters)
+            measure_sim_dict[measure_name] = {}
+            mapped_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
+                                                                    mapping_parameters)
 
-            measure_sim[measure_name]['value'] = measure_sim
-            measure_sim[measure_name]['timepoints'] = t_sim[exp_t_idx]
-        return measure_sim
+            measure_sim_dict[measure_name]['value'] = mapped_sim
+            measure_sim_dict[measure_name]['timepoints'] = t_sim[exp_t_idx]
+        return measure_sim_dict
 
     def _sim_experiments(self, exp_subset='all'):
         """
@@ -349,26 +351,33 @@ class Project(object):
 
     def _calc_model_jacobian(self):
         all_jacobians = []
+        n_vars = self._model.n_vars
+
         for experiment in self._experiments:
             if self._project_param_vector is None:
                 raise ValueError('Parameter vector not set')
-            model_jacobian = self._model.calc_jacobian(self._project_param_vector,
-                                                       experiment, self._measurement_to_model_map)
-            project_jacobian_dict = self._model_jacobian_to_project_jacobian(model_jacobian)
+
+            experiment_parameters = self._get_experiment_parameters(experiment)
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+            n_nonfixed_experiment_params = len(experiment.param_global_vector_idx)
+            init_conditions = np.zeros((n_vars + n_nonfixed_experiment_params * n_vars,))
+
+            model_jacobian = self._model.calc_jacobian(experiment_parameters, t_sim, init_conditions)
+            project_jacobian_dict = self._model_jacobian_to_project_jacobian(model_jacobian, t_sim, experiment)
             all_jacobians.append(project_jacobian_dict)
 
         self._model_jacobian = all_jacobians
 
-    def _model_jacobian_to_project_jacobian(self, jacobian_sim, t_sim, experiment, experiment_params):
+    def _model_jacobian_to_project_jacobian(self, jacobian_sim, t_sim, experiment):
         """
         Map the jacobian with respect to model parameters to the jacobian with respect to the global parameters
         """
         m = self._model
-        n_vars = m.n_vars
 
-        model_jac = jacobian_sim[:, n_vars:]
+        model_jac = jacobian_sim[:, m.n_vars:]
         # There are n_var state variables + n_vars * n_exp_params sensitivity variables.
-        transformed_params_deriv = OdeModel.param_transform_derivative(experiment_params)
+        transformed_params_deriv = OdeModel.param_transform_derivative(self._project_param_vector)
 
         jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
@@ -382,7 +391,7 @@ class Project(object):
 
             var_jacobian = np.zeros((measure_jac.shape[0], len(self._project_param_vector)))
 
-            for p_model_idx, p_name in enumerate(self.param_order):
+            for p_model_idx, p_name in enumerate(m.param_order):
                 # p_model_idx is the index of the parameter in the model
                 # p_name is the name of the parameter
                 try:
@@ -675,7 +684,7 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        if not np.alltrue(project_param_vector == self._project_param_vector):
+        if not self.caching or not np.alltrue(project_param_vector == self._project_param_vector):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
 
@@ -734,7 +743,7 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
-        if not np.alltrue(project_param_vector == self._project_param_vector):
+        if not self.caching or not np.alltrue(project_param_vector == self._project_param_vector):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
 
@@ -745,7 +754,7 @@ class Project(object):
             self._calc_model_jacobian()
             self._update_scale_factors_gradient()
 
-        elif self._model_jacobian is None:
+        elif not self.caching or self._model_jacobian is None:
             self._calc_model_jacobian()
             self._update_scale_factors_gradient()
 

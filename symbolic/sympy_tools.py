@@ -31,7 +31,6 @@ def generate_model_jacobian(equations):
     return jacobian_equations
 
 
-
 def _process_chunk(chunk, sympify_rhs=False):
     symbols_dict = OrderedDict()
 
@@ -52,7 +51,7 @@ def _process_chunk(chunk, sympify_rhs=False):
     return symbols_dict
 
 
-def _write_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
+def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
                     write_ordered_params=False, subexpressions=None):
     lines = []
     pad = "    "
@@ -115,6 +114,11 @@ def _write_model(variables, diff_eqns, params, output_fh, sens_eqns=None,
 
         for idx, eqn in enumerate(sens_eqns.values()):
             lines.append(pad + "yout[%d] = (%s)" % (idx + total_vars, eqn))
+
+    # Check for 'log' string.
+    model_str = " ".join(lines)
+    if "log" in model_str:
+        lines.insert(0, "from numpy import log \n")
 
     for line in lines:
         output_fh.write(line + "\n")
@@ -187,8 +191,8 @@ def parse_model_file(model_fh):
     return parsed_model_dict
 
 
-def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_sensitivities=True,
-                           write_ordered_params=None, simplify_subexpressions=False, make_model_jacobian=True):
+def make_jit_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_sensitivities=True,
+                   write_ordered_params=None, simplify_subexpressions=False, make_model_jacobian=False):
 
     if 'module' in str(type(model_fh)):
         import inspect
@@ -228,7 +232,6 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, make
         sens_eqns = generate_sensitivity_equations(expanded_eqns, params)
     model_dict['Sensitivity Equations'] = sens_eqns
 
-
     # Model Jacobian
     model_jac_eqns = None
     if make_model_jacobian:
@@ -240,8 +243,8 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, make
         sens_model_jac_eqns = generate_model_jacobian(sens_eqns)
     model_dict['Model Sensitivity Jacobian Equations'] = sens_model_jac_eqns
 
-
-
+    # Subexpressions
+    subexpressions = None
     if simplify_subexpressions:
         all_eqns = expanded_eqns.values()
         if sens_eqns is not None:
@@ -262,12 +265,12 @@ def make_sensitivity_model(model_fh, sens_model_fh=None, fixed_params=None, make
     model_dict['Subexpressions'] = subexpressions
 
     if write_ordered_params is None:
-        if calculate_sensitivities is True:
+        if make_model_sensitivities is True:
             write_ordered_params = False
         else:
             write_ordered_params = True
 
-    write_jit_model(variables, expanded_eqns, params, sens_model_fh,
-                    sens_eqns, write_ordered_params, subexpressions)
+    _write_jit_model(variables, expanded_eqns, params, sens_model_fh,
+                     sens_eqns, write_ordered_params, subexpressions)
 
     return model_dict

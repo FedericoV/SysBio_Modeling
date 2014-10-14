@@ -10,8 +10,8 @@ from measurement import TimecourseMeasurement
 from model import OdeModel
 from project import utils
 
-from utils.jittable_model import model as jitted_model
-from utils.sens_jittable_model import sens_model as jitted_sens_model
+from test_utils.jittable_model import model as jitted_model
+from test_utils.sens_jittable_model import sens_model as jitted_sens_model
 
 
 class TestOdeModel(TestCase):
@@ -53,15 +53,13 @@ class TestOdeModel(TestCase):
 
     def test_simulate_experiment(self):
         variable_idx = TestOdeModel.measurement_to_model_map
-        exp = TestOdeModel.simple_exp
         param_vector = np.log(np.array([0.001, 0.01]))
-        y_sim = TestOdeModel.ode_model.simulate_experiment(param_vector, exp, variable_idx)
-        assert ('Variable_1' in y_sim)
+        y_sim = TestOdeModel.ode_model.simulate_experiment(param_vector)
 
         desired = np.array([0.11049612, 0.21977129, 0.32783901, 0.43471262, 0.54040533,
                             0.64493016, 0.74830004, 0.85052773, 0.95162583])
 
-        actual = y_sim['Variable_1']['value']
+        actual = y_sim[:, variable_idx]
         assert np.allclose(actual, desired, rtol=0.05)
 
     def test_calc_jacobian(self):

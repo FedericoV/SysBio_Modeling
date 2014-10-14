@@ -1,3 +1,3 @@
 __author__ = 'federico'
 
-from utils import *
+from test_utils import *

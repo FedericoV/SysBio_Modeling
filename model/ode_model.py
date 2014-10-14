@@ -5,6 +5,7 @@ import numba
 
 from scipy.integrate import odeint
 from abstract_model import ModelABC
+from numpy import log
 
 
 class OdeModel(ModelABC):
@@ -55,23 +56,7 @@ class OdeModel(ModelABC):
             self.sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self.sens_model)
             self._jit_enabled = True
 
-    def _global_to_experiment_params(self, project_param_vector, experiment):
-        """
-        Extracts the experiment-specific parameters from the global parameter vector.
-        """
-
-        exp_param_vector = np.zeros((len(self.param_order),))
-        for p_model_idx, p_name in enumerate(self.param_order):
-            try:
-                global_idx = experiment.param_global_vector_idx[p_name]
-                param_value = project_param_vector[global_idx]
-            except KeyError:
-                param_value = experiment.fixed_parameters[p_name]
-                # If it's not an optimized parameter, it must be fixed by experiment
-            exp_param_vector[p_model_idx] = param_value
-        return exp_param_vector
-
-    def calc_jacobian(self, experiment_params, t_sim=None,
+    def calc_jacobian(self, experiment_params, t_sim,
                       init_conditions=None):
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
@@ -104,10 +89,6 @@ class OdeModel(ModelABC):
         """
 
         experiment_params = OdeModel.param_transform(experiment_params)
-
-        if init_conditions is None:
-            init_conditions = np.zeros((self.n_vars + len(experiment_params) * self.n_vars,))
-
         yout = np.zeros_like(init_conditions)
 
         def func_wrapper(y, t):
@@ -118,7 +99,7 @@ class OdeModel(ModelABC):
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
         return jacobian_sim
 
-    def simulate_experiment(self, experiment_params, t_sim=None, init_conditions=None):
+    def simulate_experiment(self, experiment_params, t_sim, init_conditions=None):
         """
         Simulates the model using the `experiment` specific parameters.
 
@@ -159,7 +140,7 @@ class OdeModel(ModelABC):
     @staticmethod
     def param_transform(project_param_vector):
         """
-        Sometimes, it's convenient to optimize models in logspace to avoid negative values.
+        Sometimes, it's convenient to optimize models in log-space to avoid negative values.
         Instead of doing :math:`Y_{sim}(\\theta)` we compute :math:`Y_{sim}(f(\\theta))`
 
         Parameters

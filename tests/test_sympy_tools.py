@@ -1,7 +1,7 @@
 __author__ = 'Federico Vaggi'
 
 
-from symbolic import make_sensitivity_model
+from symbolic import make_jit_model
 from unittest import TestCase
 from nose.tools import raises
 import os
@@ -9,9 +9,9 @@ import numpy as np
 from scipy.integrate import odeint
 import numba
 
-from utils import simple_model
-from utils.jittable_model import model as unjitted_model
-from utils.sens_jittable_model import sens_model as sens_unjitted_model
+from test_utils import simple_model
+from test_utils.jittable_model import model as unjitted_model
+from test_utils.sens_jittable_model import sens_model as sens_unjitted_model
 
 
 def make_func_wrapper(model, n_vars, p):
@@ -27,13 +27,13 @@ def make_func_wrapper(model, n_vars, p):
 class TestSymPyTools(TestCase):
     @classmethod
     def setUpClass(cls):
-        sens_jit_model = os.path.join(os.getcwd(), 'tests', 'utils', 'sens_jittable_model.py')
+        sens_jit_model = os.path.join(os.getcwd(), 'tests', 'test_utils', 'sens_jittable_model.py')
         sens_jit_fh = open(sens_jit_model, 'w')
-        make_sensitivity_model(simple_model, sens_jit_fh)
+        make_jit_model(simple_model, sens_jit_fh)
 
-        jit_model = os.path.join(os.getcwd(), 'tests', 'utils', 'jittable_model.py')
+        jit_model = os.path.join(os.getcwd(), 'tests', 'test_utils', 'jittable_model.py')
         jit_fh = open(jit_model, 'w')
-        make_sensitivity_model(simple_model, jit_fh, calculate_sensitivities=False)
+        make_jit_model(simple_model, jit_fh, make_model_sensitivities=False)
 
         p = np.array([0.01, 0.001])
         n_vars = 1
@@ -46,9 +46,12 @@ class TestSymPyTools(TestCase):
         cls.n_vars = 1
         cls.y_sim = y_sim_simple
 
+
+
+
     @raises(ValueError)
     def test_requires_sens_dir(self):
-        make_sensitivity_model(simple_model)
+        make_jit_model(simple_model)
         # No sensitivity Directory
 
     def test_simulate_unjitted_models(self):
