@@ -27,6 +27,8 @@ class Project(object):
 
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map, sf_type='linear',
                  sf_groups=None):
+        self.project_description = ""
+
         # Private variables that shouldn't be carelessly modified
         self._model = model
         self._experiments = experiments  # A list of all the experiments in the project
