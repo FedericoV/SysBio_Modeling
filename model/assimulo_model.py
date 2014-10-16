@@ -9,8 +9,8 @@ from assimulo.exception import TimeLimitExceeded
 from abstract_model import ModelABC
 
 
-def _make_rhs(odefunc, n_vars):
-    yout = np.zeros((n_vars,))
+def _make_rhs(odefunc, y0):
+    yout = np.zeros_like(y0)
 
     def assimulo_func_wrapper(t, y, p):
         odefunc(y, t, yout, p)
@@ -19,30 +19,34 @@ def _make_rhs(odefunc, n_vars):
 
 
 class NumbaExplicitProblem(Explicit_Problem):
-    def __init__(self, new_rhs, y0):
+    def __init__(self, new_rhs, y0, rhs_jac=None):
         Explicit_Problem.__init__(self, y0=y0)
-        self.rhs_func = new_rhs
+        self.rhs = new_rhs
+        self.rhs_jac = rhs_jac
 
-    def rhs(self, t, y, p):
-        return self.rhs_func(t, y, p)
+    def jac(self, t, y, p):
+        return self.rhs_jac(t, y, p).T
 
 
 class AssimuloCVode(ModelABC):
     def __init__(self, model, n_vars, param_order, model_name="Model",
-                 use_jit=True):
+                 use_jit=True, model_jac=None):
         self._unjitted_model = model  # Keep unjitted version just in case
-        if use_jit:
-            model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
-            self._jit_enabled = True
-        else:
-            self._jit_enabled = False
-
+        self._jit_enabled = False
         super(AssimuloCVode, self).__init__(model, n_vars, param_order, model_name)
         self.param_order = param_order
+        self.model_jac = model_jac
+        self.use_jac = True
 
-        rhs = _make_rhs(model, n_vars)
-        self.explicit_problem = NumbaExplicitProblem(rhs, y0=np.zeros((n_vars,)))
+        rhs = _make_rhs(model, np.zeros((n_vars,)))
+        if model_jac is not None:
+            rhs_jac = _make_rhs(model_jac, np.zeros((n_vars, n_vars)))
+
+        self.explicit_problem = NumbaExplicitProblem(rhs, y0=np.zeros((n_vars,)), rhs_jac=rhs_jac)
         self.explicit_sim = self.make_explicit_sim()
+
+        if use_jit:
+            self.enable_jit()
 
     def make_explicit_sim(self):
         explicit_sim = CVode(self.explicit_problem)
@@ -56,22 +60,36 @@ class AssimuloCVode(ModelABC):
         explicit_sim.usesens = False
         explicit_sim.verbosity = 50
 
+        if self.use_jac and self.model_jac is not None:
+            explicit_sim.usejac = True
+
+        else:
+            explicit_sim.usejac = False
+
         return explicit_sim
 
     def enable_jit(self):
         if self._jit_enabled:
             print "Model is already JIT'ed using Numba"
         else:
+
+            y0 = np.zeros((self.n_vars,))
             numba_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
-            rhs = _make_rhs(numba_model, self.n_vars)
-            explicit_problem = NumbaExplicitProblem(rhs, y0=np.zeros((self.n_vars,)))
+            numba_rhs = _make_rhs(numba_model, y0)
+
+            numba_jac = None
+            if self.model_jac is not None:
+                numba_jac = numba.jit("void(f8[:], f8, f8[:, :], f8[:])")(self.model_jac)
+            explicit_problem = NumbaExplicitProblem(numba_rhs, y0=y0, rhs_jac=numba_jac)
 
             self.explicit_problem = explicit_problem
             self.explicit_sim = self.make_explicit_sim()
             self._model = numba_model
+            self.model_jac = numba_jac
             self._jit_enabled = True
 
     def calc_jacobian(self, experiment_params, t_sim, init_conditions=None):
+        # TODO: Broken with respect to fixed parameters.
 
         self.explicit_sim.reset()
         self.explicit_sim.report_continuously = True
@@ -103,3 +121,4 @@ class AssimuloCVode(ModelABC):
         assi_t, assi_y = self.explicit_sim.simulate(t_end, ncp_list=t_sim)
 
         return assi_y
+

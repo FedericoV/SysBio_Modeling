@@ -5,7 +5,6 @@ import numba
 
 from scipy.integrate import odeint
 from abstract_model import ModelABC
-from numpy import log
 
 
 class OdeModel(ModelABC):
@@ -29,18 +28,19 @@ class OdeModel(ModelABC):
     """
 
     def __init__(self, model, sens_model, n_vars, param_order, model_name="Model",
-                 use_jit=True):
+                 use_jit=True, model_jac=None, sens_model_jac=None):
         self._unjitted_model = model  # Keep unjitted version just in case
         self._unjitted_sens_model = sens_model
-        if use_jit:
-            model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
-            sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(sens_model)
-            self._jit_enabled = True
-        else:
-            self._jit_enabled = False
-
+        self._jit_enabled = False
         super(OdeModel, self).__init__(model, n_vars, param_order, model_name)
+
         self.sens_model = sens_model
+        self.model_jac = model_jac
+        self.sens_model_jac = sens_model_jac
+        self.use_jac = True
+
+        if use_jit:
+            self.enable_jit()
 
     def enable_jit(self):
         if self._jit_enabled:
@@ -48,9 +48,17 @@ class OdeModel(ModelABC):
         else:
             self._model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
             self.sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self.sens_model)
+
+            if self.model_jac is not None:
+                self.model_jac = numba.jit("void(f8[:], f8, f8[:, :], f8[:])")(self.model_jac)
+
+            if self.sens_model_jac is not None:
+                self.sens_model_jac = numba.jit("void(f8[:], f8, f8[:, :], f8[:])")(self.sens_model_jac)
+
             self._jit_enabled = True
 
     def calc_jacobian(self, experiment_params, t_sim, init_conditions):
+        # TODO: BROKEN COMMENTS
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
 
@@ -82,15 +90,21 @@ class OdeModel(ModelABC):
         """
 
         yout = np.zeros_like(init_conditions)
-
         def func_wrapper(y, t):
             self.sens_model(y, t, yout, experiment_params)
             return yout
 
-        jacobian_sim = odeint(func_wrapper, init_conditions, t_sim)
+        if self.sens_model_jac is None or not self.use_jac:
+            jac_wrapper = None
+        else:
+            jacout = np.zeros((len(init_conditions), len(init_conditions)))
+            def jac_wrapper(y, t):
+                self.sens_model_jac(y, t, jacout, experiment_params)
+                return jacout
+
+        jacobian_sim = odeint(func_wrapper, init_conditions, t_sim, Dfun=jac_wrapper, col_deriv=True)
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
         sensitivity_eqns = jacobian_sim[:, self.n_vars:]
-
         return sensitivity_eqns
 
     def simulate_experiment(self, experiment_params, t_sim, init_conditions=None):
@@ -119,12 +133,18 @@ class OdeModel(ModelABC):
         if init_conditions is None:
             init_conditions = np.zeros((self._n_vars,))
 
-        yout = np.zeros_like(init_conditions)
+        if self.model_jac is None or not self.use_jac:
+            jac_wrapper = None
+        else:
+            jacout = np.zeros((len(init_conditions), len(init_conditions)))
+            def jac_wrapper(y, t):
+                self.model_jac(y, t, jacout, experiment_params)
+                return jacout
 
+        yout = np.zeros_like(init_conditions)
         def func_wrapper(y, t):
             self._model(y, t, yout, experiment_params)
             return yout
 
-        model_sim = odeint(func_wrapper, init_conditions, t_sim)
-
+        model_sim = odeint(func_wrapper, init_conditions, t_sim, Dfun=jac_wrapper, col_deriv=True)
         return model_sim
