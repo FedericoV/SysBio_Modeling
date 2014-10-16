@@ -39,14 +39,8 @@ class OdeModel(ModelABC):
         else:
             self._jit_enabled = False
 
-        super(OdeModel, self).__init__(model, n_vars, model_name)
+        super(OdeModel, self).__init__(model, n_vars, param_order, model_name)
         self.sens_model = sens_model
-        self.param_order = param_order
-
-    def get_n_vars(self):
-        return self._n_vars
-
-    n_vars = property(get_n_vars)
 
     def enable_jit(self):
         if self._jit_enabled:
@@ -56,8 +50,7 @@ class OdeModel(ModelABC):
             self.sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self.sens_model)
             self._jit_enabled = True
 
-    def calc_jacobian(self, experiment_params, t_sim,
-                      init_conditions=None):
+    def calc_jacobian(self, experiment_params, t_sim, init_conditions):
         """
         Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
 
@@ -88,7 +81,6 @@ class OdeModel(ModelABC):
         The jacobian with respect to global parameters that aren't in the experiment will thus be zero.
         """
 
-        experiment_params = OdeModel.param_transform(experiment_params)
         yout = np.zeros_like(init_conditions)
 
         def func_wrapper(y, t):
@@ -97,7 +89,9 @@ class OdeModel(ModelABC):
 
         jacobian_sim = odeint(func_wrapper, init_conditions, t_sim)
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
-        return jacobian_sim
+        sensitivity_eqns = jacobian_sim[:, self.n_vars:]
+
+        return sensitivity_eqns
 
     def simulate_experiment(self, experiment_params, t_sim, init_conditions=None):
         """
@@ -125,7 +119,6 @@ class OdeModel(ModelABC):
         if init_conditions is None:
             init_conditions = np.zeros((self._n_vars,))
 
-        experiment_params = OdeModel.param_transform(experiment_params)
         yout = np.zeros_like(init_conditions)
 
         def func_wrapper(y, t):
@@ -135,51 +128,3 @@ class OdeModel(ModelABC):
         model_sim = odeint(func_wrapper, init_conditions, t_sim)
 
         return model_sim
-
-
-    @staticmethod
-    def param_transform(project_param_vector):
-        """
-        Sometimes, it's convenient to optimize models in log-space to avoid negative values.
-        Instead of doing :math:`Y_{sim}(\\theta)` we compute :math:`Y_{sim}(f(\\theta))`
-
-        Parameters
-        ----------
-        project_param_vector: :class:`~numpy:numpy.ndarray`
-            An (n,) dimensional array containing the parameters being optimized in the project
-
-        Returns
-        -------
-        transformated_parameters: :class:`~numpy:numpy.ndarray`
-            An (n,) dimensional array the parameters after applying a transformation
-
-        See Also
-        --------
-        param_transform_derivative
-
-        """
-        exp_param_vector = np.exp(project_param_vector)
-        return exp_param_vector
-
-    @staticmethod
-    def param_transform_derivative(project_param_vector):
-        """
-        The derivative of the function applied to the parameters prior to the simulation.
-        :math:`\\frac{\\partial f}{\\partial \\theta}`
-
-        Parameters
-        ----------
-        project_param_vector: :class:`~numpy:numpy.ndarray`
-            An (n,) dimensional array containing the parameters being optimized in the project
-
-        Returns
-        -------
-        transformation_derivative: :class:`~numpy:numpy.ndarray`
-            An (n,) dimensional array  containing the derivatives of the parameter transformation function
-
-        See Also
-        --------
-        param_transform
-        """
-        transformation_derivative = np.exp(project_param_vector)
-        return transformation_derivative

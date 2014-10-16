@@ -3,18 +3,33 @@ __author__ = 'Federico Vaggi'
 import numpy as np
 import numba
 from assimulo.problem import Explicit_Problem
+from assimulo.solvers import CVode
 from assimulo.solvers.sundials import CVodeError
 from assimulo.exception import TimeLimitExceeded
-
-
 from abstract_model import ModelABC
 
 
-class p53_assimulo_sim(Explicit_Problem, ModelABC):
-    def __init__(self, model, n_vars, param_order, y0, p0, model_name="Model", use_jit=True):
+def _make_rhs(odefunc, n_vars):
+    yout = np.zeros((n_vars,))
 
-        Explicit_Problem.__init__(self, y0=y0, p0=p0)
+    def assimulo_func_wrapper(t, y, p):
+        odefunc(y, t, yout, p)
+        return yout
+    return assimulo_func_wrapper
 
+
+class NumbaExplicitProblem(Explicit_Problem):
+    def __init__(self, new_rhs, y0):
+        Explicit_Problem.__init__(self, y0=y0)
+        self.rhs_func = new_rhs
+
+    def rhs(self, t, y, p):
+        return self.rhs_func(t, y, p)
+
+
+class AssimuloCVode(ModelABC):
+    def __init__(self, model, n_vars, param_order, model_name="Model",
+                 use_jit=True):
         self._unjitted_model = model  # Keep unjitted version just in case
         if use_jit:
             model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(model)
@@ -22,173 +37,69 @@ class p53_assimulo_sim(Explicit_Problem, ModelABC):
         else:
             self._jit_enabled = False
 
+        super(AssimuloCVode, self).__init__(model, n_vars, param_order, model_name)
         self.param_order = param_order
-        ModelABC, self.__init__(model, n_vars, model_name)
 
-    def get_n_vars(self):
-        return self._n_vars
+        rhs = _make_rhs(model, n_vars)
+        self.explicit_problem = NumbaExplicitProblem(rhs, y0=np.zeros((n_vars,)))
+        self.explicit_sim = self.make_explicit_sim()
 
-    n_vars = property(get_n_vars)
+    def make_explicit_sim(self):
+        explicit_sim = CVode(self.explicit_problem)
+        explicit_sim.iter = 'Newton'
+        explicit_sim.discr = 'BDF'
+        explicit_sim.rtol = 1e-7
+        explicit_sim.atol = 1e-7
+        explicit_sim.sensmethod = 'SIMULTANEOUS'
+        explicit_sim.suppress_sens = True
+        explicit_sim.report_continuously = False
+        explicit_sim.usesens = False
+        explicit_sim.verbosity = 50
+
+        return explicit_sim
 
     def enable_jit(self):
         if self._jit_enabled:
             print "Model is already JIT'ed using Numba"
         else:
-            self._model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
+            numba_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
+            rhs = _make_rhs(numba_model, self.n_vars)
+            explicit_problem = NumbaExplicitProblem(rhs, y0=np.zeros((self.n_vars,)))
+
+            self.explicit_problem = explicit_problem
+            self.explicit_sim = self.make_explicit_sim()
+            self._model = numba_model
             self._jit_enabled = True
 
-    def set_param_order(self, p53_exp):
-        param_global_vector_idx = p53_exp.param_global_vector_idx
+    def calc_jacobian(self, experiment_params, t_sim, init_conditions=None):
 
-        self.param_order = {p_name: p_idx_local for p_idx_local, p_name,
-                            in enumerate(param_global_vector_idx)}
+        self.explicit_sim.reset()
+        self.explicit_sim.report_continuously = True
+        self.explicit_sim.usesens = True
 
-    def get_param_vector_idx(self, p53_exp):
-        param_global_vector_idx = p53_exp.param_global_vector_idx
+        if init_conditions is not None:
+            self.explicit_sim.y0 = init_conditions
 
-        p_idx = np.empty(len(param_global_vector_idx))
-        for p_name, p_idx_local in self.param_order.items():
-            # Only works because param_global_vector_idx is an OrderedDict
-            p_idx_global = param_global_vector_idx[p_name]
-            p_idx[p_idx_local] = p_idx_global
-        return p_idx
+        self.explicit_sim.p0 = experiment_params
+        #self.explicit_sim.pbar = experiment_params
 
-    def get_param_vector(self, p53_exp, project_param_vector):
+        t_end = t_sim[-1]
 
-        p_idx = self.get_param_vector_idx(p53_exp)
-        p = []
-        for model_idx in p_idx:
-            p.append(project_param_vector[model_idx])
-        p = np.array(p)
-        return p
+        self.explicit_sim.simulate(t_end, ncp_list=t_sim)
 
-    def rhs(self, t, y, p):
-        '''
-        Wraps a SciPy odeint function into a format usable by Assimulo.
+        jac = np.array(self.assimulo_sim.p_sol)
+        jac = jac.reshape(jac.shape[0], jac.shape[1])
 
-        Assimulo Explicit_Problem have a .rhs method with a
-        signature of (t, y, p) which is called by the the CVode integrator.
-        We create a wrapper around a function which has the SciPy odeint
-        call function signature (y, t, *args)
+        return jac
 
-        Parameters
-        -----------
-        odeint_fcn: SciPy odeint function
-            A function that can be integrated by SciPy odeint,
-            whose signature is y = f(y, t, *args).  We assume that the
-            *args field is used to pass the parameters to the function.
+    def simulate_experiment(self, experiment_params, t_sim, init_conditions=None):
 
-        param_global_vector_idx: OrderedDict
-            An ordered dictionary that, for each experiment, stores
-            the information about where in the global parameter vector
-            is the value of a particular parameter.
-        '''
+        self.explicit_problem.p0 = experiment_params
+        self.explicit_sim = self.make_explicit_sim()
+        self.explicit_sim.y0 = init_conditions
 
-        args = (self.param_order, self.conditions, p)
-        return self.odeint_fcn(y, t, *args)
+        t_end = t_sim[-1]
 
+        assi_t, assi_y = self.explicit_sim.simulate(t_end, ncp_list=t_sim)
 
-def make_assimulo_fcn(assi_sim, experiments, n_vars=6, t_max=32400,
-                      verbose=True, std_normalization=False,
-                      mean_normalization=False, return_grad_as_tuple=False,
-                      scaled_model=False):
-    def assi_fitting_fcn(project_param_vector, grad=None):
-        residuals = np.array([])
-
-        if return_grad_as_tuple:
-            grad = np.zeros_like(project_param_vector)
-        if grad.size > 0:
-            grad[:] = 0.0
-
-        total_exp_points = 0
-
-        for p53_exp in experiments:
-            init_conditions = np.zeros((n_vars,))
-
-            try:
-                t_sim, y_sim, exp_sens = p53_exp.simulate_assimulo_model(
-                    assi_sim, project_param_vector, init_conditions,
-                    scaled_model=scaled_model)
-
-                exp_res = p53_exp.residuals(t_sim, y_sim[:, -1],
-                                            std_normalization=std_normalization,
-                                            mean_normalization=mean_normalization)
-
-                if grad.size > 0:
-                    grad_t = (exp_res * exp_sens.T)
-                    grad[:] += np.sum(grad_t, axis=1)
-
-                total_exp_points += len(exp_res)
-
-            except (CVodeError, TimeLimitExceeded) as inst:
-                exp_res = 100000  # Large arbitrary value
-                print p53_exp.name, inst
-
-            residuals = np.hstack([residuals, exp_res])
-
-        grad[:] /= total_exp_points
-        rss = np.sum(residuals ** 2)  # L2 loss
-
-        if verbose:
-            print "RSS: %s" % rss
-            print "Gradient: %s" % grad
-            print "Parameter Vector: %s" % project_param_vector
-            print "\n\n"
-        if return_grad_as_tuple:
-            return rss, grad
-        else:
-            return rss
-
-    return assi_fitting_fcn
-
-
-def simulate_assimulo_model(self, assi_sim, project_param_vector,
-                            init_conditions=np.zeros(6, ),
-                            t_sim=None, calculate_sensitivity=True,
-                            scaled_model=False):
-    '''t_sim there for compatibility, doesn't do anything'''
-
-    # Sets empty, gal concentration, etc.
-    assi_sim.reset()
-    assi_sim.problem.conditions = self.conditions
-    p = assi_sim.problem.get_param_vector(self, project_param_vector)
-
-    assi_sim.p = p
-    assi_sim.pbar = np.ones_like(p)
-
-    endpoint = self.timepoints[-1]
-
-    if scaled_model:
-        k_deg_p53 = np.log(2) / (3600 * 6)
-        RE_total = 0.0005725
-        endpoint = endpoint * k_deg_p53
-
-    if not calculate_sensitivity:
-        (t_sim, assi_y) = assi_sim.simulate(endpoint)
-        return (t_sim, assi_y)
-
-    t_sim, assi_y = assi_sim.simulate(endpoint, ncp=1000)
-
-    if scaled_model:
-        t_sim = t_sim / k_deg_p53
-        assi_y = assi_y * RE_total
-
-    t_idx = np.searchsorted(t_sim, self.timepoints[self.timepoints != 0])
-    # We ignore sensitivity for point 0
-
-    glob_sens = np.zeros((len(t_idx), len(project_param_vector)))
-
-    param_sens = np.array(assi_sim.p_sol)
-    # sensitivity is with respect to the parameters INSIDE the model.
-    # A parameter in the project_param_vector can be used twice inside
-    # the model - so need to average out the two sensitivities.
-    p_idx = assi_sim.problem.get_param_vector_idx(self)
-    # p_idx is a vector that tells you where the ith parameter of
-    # the model is in the project_parameter_vector - so p[i] = j
-    # means that the ith model parameter is in the jth position
-    # of project_param_vector.
-
-    for l_idx, g_idx in enumerate(p_idx):
-        glob_sens[:, g_idx] += param_sens[l_idx, t_idx, -1]
-
-    return (t_sim, assi_y, glob_sens)
+        return assi_y

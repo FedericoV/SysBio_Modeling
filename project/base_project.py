@@ -6,7 +6,7 @@ import numpy as np
 
 from scale_factors import LinearScaleFactor
 from model import OdeModel
-from .utils import OrderedHashDict
+from .utils import OrderedHashDict, exp_param_transform, exp_param_transform_derivative
 from . import utils
 
 
@@ -263,6 +263,7 @@ class Project(object):
             try:
                 global_idx = experiment.param_global_vector_idx[p_name]
                 param_value = self._project_param_vector[global_idx]
+                param_value = np.exp(param_value)
             except KeyError:
                 param_value = experiment.fixed_parameters[p_name]
                 # If it's not an optimized parameter, it must be fixed by experiment
@@ -375,9 +376,10 @@ class Project(object):
         """
         m = self._model
 
-        model_jac = jacobian_sim[:, m.n_vars:]
-        # There are n_var state variables + n_vars * n_exp_params sensitivity variables.
-        transformed_params_deriv = OdeModel.param_transform_derivative(self._project_param_vector)
+        transformed_params_deriv = np.exp(self._project_param_vector)
+        # The project parameters are in log space, so:
+        # f(g(x)) where g(x) is e^x - so d(f(g(x))/dx = df/dx(g(x))*dg/dx(x)
+        # dg/dx = e^x
 
         jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
@@ -387,7 +389,7 @@ class Project(object):
             mapping_struct = self._measurement_to_model_map[measure_name]
             model_jac_to_measure_func = mapping_struct['model_jac_to_measure_jac_func']
             mapping_parameters = mapping_struct['parameters']
-            measure_jac = model_jac_to_measure_func(model_jac, t_sim, experiment, measurement, mapping_parameters)
+            measure_jac = model_jac_to_measure_func(jacobian_sim, t_sim, experiment, measurement, mapping_parameters)
 
             var_jacobian = np.zeros((measure_jac.shape[0], len(self._project_param_vector)))
 
