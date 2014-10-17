@@ -13,6 +13,10 @@ def _make_rhs(odefunc, y0):
     yout = np.zeros_like(y0)
 
     def assimulo_func_wrapper(t, y, p):
+        #print t.shape
+        #print y.shape
+        #print p.shape
+        #print yout.shape
         odefunc(y, t, yout, p)
         return yout
     return assimulo_func_wrapper
@@ -25,7 +29,8 @@ class NumbaExplicitProblem(Explicit_Problem):
         self.rhs_jac = rhs_jac
 
     def jac(self, t, y, p):
-        return self.rhs_jac(t, y, p).T
+        col_jac = self.rhs_jac(t, y, p)
+        return col_jac.T
 
 
 class AssimuloCVode(ModelABC):
@@ -80,7 +85,10 @@ class AssimuloCVode(ModelABC):
             numba_jac = None
             if self.model_jac is not None:
                 numba_jac = numba.jit("void(f8[:], f8, f8[:, :], f8[:])")(self.model_jac)
-            explicit_problem = NumbaExplicitProblem(numba_rhs, y0=y0, rhs_jac=numba_jac)
+                y0_jac = np.zeros((self.n_vars, self.n_vars))
+                numba_jac_rhs = _make_rhs(numba_jac, y0_jac)
+
+            explicit_problem = NumbaExplicitProblem(numba_rhs, y0=y0, rhs_jac=numba_jac_rhs)
 
             self.explicit_problem = explicit_problem
             self.explicit_sim = self.make_explicit_sim()
@@ -91,9 +99,9 @@ class AssimuloCVode(ModelABC):
     def calc_jacobian(self, experiment_params, t_sim, init_conditions=None):
         # TODO: Broken with respect to fixed parameters.
 
-        self.explicit_sim.reset()
-        self.explicit_sim.report_continuously = True
-        self.explicit_sim.usesens = True
+        self.explicit_problem.p0 = experiment_params
+        self.explicit_sim = self.make_explicit_sim()
+        self.explicit_sim.y0 = init_conditions
 
         if init_conditions is not None:
             self.explicit_sim.y0 = init_conditions
