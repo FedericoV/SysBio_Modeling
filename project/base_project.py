@@ -24,6 +24,10 @@ class Project(object):
     measurement_to_model_map : dict
         A dictionary of functions that maps the variables simulated by the model to the observed
          measurements in the experiments.
+    sf_type: string, optional 
+        How to scale simulations to map them to measurements.
+    sf_groups: list
+        A list of tuples of measurements that have to share the same scale factor
     """
 
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map, sf_type='linear',
