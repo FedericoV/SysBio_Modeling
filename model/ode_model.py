@@ -1,7 +1,8 @@
 from collections import OrderedDict
 
 import numpy as np
-import numba
+
+
 
 from scipy.integrate import odeint
 from abstract_model import ModelABC
@@ -28,32 +29,47 @@ class OdeModel(ModelABC):
     """
 
     def __init__(self, model, sens_model, n_vars, param_order, model_name="Model",
-                 use_jit=True, model_jac=None, sens_model_jac=None):
+                 use_jit='True', model_jac=None, sens_model_jac=None, jit_type='numba'):
         self._unjitted_model = model  # Keep unjitted version just in case
         self._unjitted_sens_model = sens_model
+        self._unjitted_model_jac = model_jac
+        self._unijitted_sens_model_jac = sens_model_jac
         self._jit_enabled = False
-        super(OdeModel, self).__init__(model, n_vars, param_order, model_name)
 
+        super(OdeModel, self).__init__(model, n_vars, param_order, model_name)
         self.sens_model = sens_model
         self.model_jac = model_jac
         self.sens_model_jac = sens_model_jac
         self.use_jac = True
+        self.jit_type = jit_type
 
         if use_jit:
             self.enable_jit()
 
     def enable_jit(self):
-        if self._jit_enabled:
-            print "Model is already JIT'ed using Numba"
-        else:
-            self._model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self._model)
-            self.sens_model = numba.jit("void(f8[:], f8, f8[:], f8[:])")(self.sens_model)
+        if self.jit_type == 'numba':
+            from numba import jit as numba_jit
+
+            self._model = numba_jit("void(f8[:], f8, f8[:], f8[:])")(self._unjitted_model)
+            self.sens_model = numba_jit("void(f8[:], f8, f8[:], f8[:])")(self._unjitted_sens_model)
 
             if self.model_jac is not None:
-                self.model_jac = numba.jit("void(f8[:], f8, f8[:, :], f8[:])")(self.model_jac)
+                self.model_jac = numba_jit("void(f8[:], f8, f8[:, :], f8[:])")(self._unjitted_model_jac)
 
             if self.sens_model_jac is not None:
-                self.sens_model_jac = numba.jit("void(f8[:], f8, f8[:, :], f8[:])")(self.sens_model_jac)
+                self.sens_model_jac = numba_jit("void(f8[:], f8, f8[:, :], f8[:])")(self._unijitted_sens_model_jac)
+
+        elif self.jit_type == 'hope':
+            from hope import jit as hope_jit
+
+            self._model = hope_jit(self._unjitted_model)
+            self.sens_model = hope_jit(self._unjitted_sens_model)
+
+            if self.model_jac is not None:
+                self.model_jac = hope_jit(self._unjitted_model_jac)
+
+            if self.sens_model_jac is not None:
+                self.sens_model_jac = hope_jit(self._unijitted_sens_model_jac)
 
             self._jit_enabled = True
 
