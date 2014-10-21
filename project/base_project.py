@@ -8,7 +8,7 @@ from scale_factors import LinearScaleFactor
 from model import OdeModel
 from .utils import OrderedHashDict, exp_param_transform, exp_param_transform_derivative
 from . import utils
-
+from pandas import DataFrame, to_timedelta
 
 class Project(object):
     """Class to simulate experiments with a given model
@@ -572,6 +572,36 @@ class Project(object):
 
         if len(self._experiments) == 0:
             warnings.warn('Project has no more experiments')
+
+    def experiments_to_dataframe(self, exp_subset_idx='all'):
+        """
+        Converts experiments in the project in a dataframe"""
+        # TODO: Works only for timecourse measurements
+        experiment_subset = []
+        if exp_subset_idx is 'all':
+            experiment_subset = self._experiments
+        else:
+            for exp_idx in exp_subset_idx:
+                experiment_subset.append(self._experiments[exp_idx])
+
+        experiments_df = OrderedDict()
+        idx = 0
+        for experiment in experiment_subset:
+            for measurement in experiment.measurements:
+                for timepoint, value, std in zip(measurement.timepoints, measurement.values, measurement.std):
+                    experiments_df[idx] = {}
+                    experiments_df[idx]['experiment_name'] = experiment.name
+                    experiments_df[idx]['measure_name'] = measurement.variable_name
+                    experiments_df[idx]['values'] = std
+                    experiments_df[idx]['std'] = value
+                    experiments_df[idx]['timepoints'] = timepoint
+                    # TODO: Pandas timedeltas
+                    idx += 1
+
+        experiments_df = DataFrame(experiments_df).T
+        experiments_df = experiments_df.set_index(['experiment_name', 'measure_name'])
+
+        return experiments_df
 
     def measure_iterator(self, measure_name):
         if type(measure_name) is str:
