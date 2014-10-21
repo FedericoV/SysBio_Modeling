@@ -8,7 +8,7 @@ from scale_factors import LinearScaleFactor
 from model import OdeModel
 from .utils import OrderedHashDict, exp_param_transform, exp_param_transform_derivative
 from . import utils
-from pandas import DataFrame, to_timedelta
+from pandas import DataFrame, to_timedelta, concat
 
 class Project(object):
     """Class to simulate experiments with a given model
@@ -93,7 +93,7 @@ class Project(object):
                     self._scale_factors[measure_group] = LinearScaleFactor()
 
         # Variables modified upon simulation:
-        self._all_sims = []
+        self._mapped_unscaled_simulations = []
         self._all_residuals = None
         self._model_jacobian = None
         self._project_param_vector = np.zeros((self.n_project_params,))
@@ -274,12 +274,12 @@ class Project(object):
             exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
-    def _map_model_sim_to_measures(self, model_sim, t_sim, experiment):
+    def _map_model_sim_to_measures(self, model_sim, experiment):
         """
         Maps a model simulation to a particular measurement.  This is necessary because not all model variables
         map cleanly to a single measurement.
         """
-        measure_sim_dict = OrderedDict()
+        measure_df = []
 
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
@@ -287,37 +287,28 @@ class Project(object):
             model_variables_to_measure_func = mapping_struct['model_variables_to_measure_func']
             mapping_parameters = mapping_struct['parameters']
 
-            measure_sim_dict[measure_name] = {}
-            mapped_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
-                                                                    mapping_parameters)
+            mapped_series = model_variables_to_measure_func(model_sim, measurement,
+                                                            mapping_parameters)
 
-            measure_sim_dict[measure_name]['value'] = mapped_sim
-            measure_sim_dict[measure_name]['timepoints'] = t_sim[exp_t_idx]
-        return measure_sim_dict
+            measure_df.append(mapped_series)
+        measure_df = DataFrame(measure_df)
+        return measure_df
 
-    def _sim_experiments(self, exp_subset='all'):
+    def _update_measure_simulations(self):
+        self._mapped_unscaled_simulations = self.simulate_all_measurements()
+
+    def simulate_all_measurements(self):
         """
         Simulates all the experiments in the project.
         """
+        all_mapped_sims_df = []
+        for experiment in self._experiments:
+            model_sim = self.simulate_experiment(experiment)
+            mapped_sim = self._map_model_sim_to_measures(model_sim, experiment)
+            all_mapped_sims_df.append(mapped_sim)
+        all_mapped_sims_df = concat(all_mapped_sims_df)
 
-        if self._project_param_vector is None:
-            raise ValueError('Parameter vector not set')
-
-        simulated_experiments = []
-
-        if exp_subset is 'all':
-            simulated_experiments = self._experiments
-        else:
-            for exp_idx in exp_subset:
-                simulated_experiments.append(self._experiments[exp_idx])
-
-        for experiment in simulated_experiments:
-            experiment_parameters = self._get_experiment_parameters(experiment)
-            t_end = experiment.get_unique_timepoints()[-1]
-            t_sim = np.linspace(0, t_end, 1000)
-            model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
-            mapped_sim = self._map_model_sim_to_measures(model_sim, t_sim, experiment)
-            self._all_sims.append(mapped_sim)
+        return all_mapped_sims_df
 
     def _calc_experiment_residuals(self, exp_idx):
         """Returns the residuals between simulations (after scaling) and experimental measurement.
@@ -333,7 +324,7 @@ class Project(object):
             sf = self._scale_factors[measure_name].sf
 
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = self._all_sims[exp_idx][measure_name]['value']
+            sim_data = self._mapped_unscaled_simulations[exp_idx][measure_name]['value']
 
             residuals[measure_name] = (sim_data * sf - exp_data) / exp_std
 
@@ -354,7 +345,7 @@ class Project(object):
     # Sensitivity Methods
     ##########################################################################################################
 
-    def _calc_model_jacobian(self):
+    def _updated_measure_jacobian(self):
         all_jacobians = []
         n_vars = self._model.n_vars
 
@@ -598,10 +589,75 @@ class Project(object):
                     # TODO: Pandas timedeltas
                     idx += 1
 
-        experiments_df = DataFrame(experiments_df).T
+        experiments_df = DataFrame(experiments_df, dtype=float).T
         experiments_df = experiments_df.set_index(['experiment_name', 'measure_name'])
 
         return experiments_df
+
+    def simulate_experiment(self, experiment, n_timepoints=1000):
+        """
+        Simulates an experiment
+        """
+        experiment_parameters = self._get_experiment_parameters(experiment)
+
+        remove_t0 = False
+        if n_timepoints is None:
+            # We have to add a t0 if it's not there:
+            t_sim = experiment.get_unique_timepoints()
+            t_sim = np.hstack((0, t_sim))
+            remove_t0 = True
+
+        else:
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+
+        n_vars = self._model.n_vars
+        unscaled_model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
+        column_names = ['y%d' % s for s in range(n_vars)]
+
+        if remove_t0:
+            unscaled_model_sim = unscaled_model_sim[1:, :]
+            t_sim = t_sim[1:]
+
+        unscaled_model_sim = DataFrame(unscaled_model_sim, columns=column_names)
+        unscaled_model_sim['timepoints'] = t_sim
+        return unscaled_model_sim
+
+    def simulate_sensitivity_equations_experiment(self, experiment, n_timepoints=1000):
+        """
+        Simulates an experiment
+        """
+        experiment_parameters = self._get_experiment_parameters(experiment)
+
+        remove_t0 = False
+        if n_timepoints is None:
+            # We have to add a t0 if it's not there:
+            t_sim = experiment.get_unique_timepoints()
+            t_sim = np.hstack((0, t_sim))
+            remove_t0 = True
+        else:
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+
+        n_vars = self._model.n_vars
+        n_nonfixed_experiment_params = len(experiment.param_global_vector_idx)
+        init_conditions = np.zeros((n_vars + n_nonfixed_experiment_params * n_vars,))
+
+        model_sens_eqns = self._model.calc_jacobian(experiment_parameters, t_sim, init_conditions)
+
+        column_names = []
+        for i in range(n_vars):
+            for m_p in self._model.param_order:
+                if m_p not in experiment.fixed_parameters:
+                    column_names.append('dy%d/d%s' % (i, m_p))
+
+        if remove_t0:
+            model_sens_eqns = model_sens_eqns[1:, :]
+            t_sim = t_sim[1:]
+
+        model_sens_eqns = DataFrame(model_sens_eqns, columns=column_names)
+        model_sens_eqns['timepoints'] = t_sim
+        return model_sens_eqns
 
     def measure_iterator(self, measure_name):
         if type(measure_name) is str:
@@ -616,7 +672,7 @@ class Project(object):
                 experiment = self._experiments[exp_idx]
                 exp_weight = self.experiments_weights[exp_idx]
                 measurement = experiment.get_variable_measurements(measure_name)
-                sim = self._all_sims[exp_idx][measure_name]
+                sim = self._mapped_unscaled_simulations[exp_idx][measure_name]
                 try:
                     sim_jac = self._model_jacobian[exp_idx][measure_name]  # Matrix
                 except (KeyError, TypeError):
@@ -669,7 +725,7 @@ class Project(object):
             return self._project_param_idx[parameter_group][settings]
 
     def reset_calcs(self):
-        self._all_sims = []
+        self._mapped_unscaled_simulations = []
         self._all_residuals = None
         self._model_jacobian = None
         self._project_param_vector = np.zeros((self.n_project_params,))
@@ -724,7 +780,7 @@ class Project(object):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
 
-            self._sim_experiments()
+            self._simulate_all_measurements()
             self._update_scale_factors()
             self._calc_all_residuals()
 
@@ -783,7 +839,7 @@ class Project(object):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
 
-            self._sim_experiments()
+            self._simulate_all_measurements()
             self._update_scale_factors()
             self._calc_all_residuals()
 
@@ -796,7 +852,7 @@ class Project(object):
 
         measurements_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
-        for exp_jac, exp_sim in zip(self._model_jacobian, self._all_sims):
+        for exp_jac, exp_sim in zip(self._model_jacobian, self._mapped_unscaled_simulations):
             for measure_name in exp_jac:
                 measure_sim = exp_sim[measure_name]['value']
                 measure_sim_jac = exp_jac[measure_name]
@@ -975,12 +1031,6 @@ class Project(object):
             for exp_settings, global_idx in self._project_param_idx[p_group].items():
                 param_dict[p_group][exp_settings] = param_vector[global_idx]
         return param_dict
-
-    def model_hessian(self, project_param_vector):
-        pass
-
-    def parameter_uncertainty(self, project_param_vector):
-        pass
 
     def calc_scale_factors_entropy(self, temperature=1.0):
         """

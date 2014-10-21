@@ -17,11 +17,13 @@ def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
     return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
 
 
+@numba.jit
 def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
     sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
     sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
 
 
+@numba.jit
 def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
                                   sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim, exp_weight=1):
     sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1) * exp_weight  # Vector
