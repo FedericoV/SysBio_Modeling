@@ -17,11 +17,6 @@ def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
     return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
 
 
-@numba.jit
-def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
-    sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
-    sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
-
 
 @numba.jit
 def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
@@ -32,8 +27,9 @@ def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
     sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2)) * exp_weight  # Scalar
 
 
-def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
-    scale_jac_out[:] = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
+def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp):
+    scale_jac_out = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
+    return scale_jac_out
 
 
 class LinearScaleFactor(ScaleFactorABC):
@@ -42,38 +38,33 @@ class LinearScaleFactor(ScaleFactorABC):
         super(LinearScaleFactor, self).__init__(log_prior, log_prior_sigma)
         self._sf = 1.0
 
-    def update_sf(self, measure_iterator):
-        sim_dot_exp = np.zeros((1,), dtype='float64')
-        sim_dot_sim = np.zeros((1,), dtype='float64')
+    def update_sf(self, measure_sim_df, measure_exp_df):
+        sigma = measure_exp_df["std"]
+        exp_values = measure_exp_df["values"]
+        sim_values = measure_sim_df["values"]
 
-        for (measurement, sim, model_sens, exp_weight) in measure_iterator:
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = sim['value']
-            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, 1)
+        sim_dot_exp = np.sum((sim_values * exp_values) / sigma**2)
+        sim_dot_sim = np.sum((sim_values * sim_values) / sigma**2)
 
         self._sf = sim_dot_exp / sim_dot_sim
 
-    def update_sf_gradient(self, measure_iterator, n_global_pars):
+    def update_sf_gradient(self, measure_sim_df, measure_exp_df, measure_sim_jac_df):
         """
         Analytically calculates the gradient of the scale factors for each measurement
         """
 
-        scale_factor_gradient = np.zeros((n_global_pars,), dtype='float64')
-        sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
-        sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
-        sim_dot_sim = np.zeros((1,), dtype='float64')
-        sim_dot_exp = np.zeros((1,), dtype='float64')
+        sigma = measure_exp_df["std"]
+        exp_values = measure_exp_df["values"]
+        sim_values = measure_sim_df["values"]
+        sens_values = measure_sim_jac_df.drop("timepoints", axis=1)  # Matrix
 
-        for (measurement, sim, model_sens, exp_weight) in measure_iterator:
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = sim['value']
-            _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                          sens_dot_exp_data, sens_dot_sim, 1)
+        sim_dot_exp = np.sum((sim_values * exp_values) / sigma**2)
+        sim_dot_sim = np.sum((sim_values * sim_values) / sigma**2)
+        sens_dot_exp = np.sum((sens_values.T * exp_values) / sigma**2, axis=1)
+        sens_dot_sim = np.sum((sens_values.T * sim_values) / sigma**2, axis=1)
 
-        _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp,
-                               scale_factor_gradient)
-
-        self._sf_gradient = scale_factor_gradient
+        scale_jac = _combine_scale_factors(sens_dot_exp, sens_dot_sim, sim_dot_sim, sim_dot_exp)
+        self._sf_gradient = scale_jac
 
     def calc_sf_prior_gradient(self):
         """
