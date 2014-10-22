@@ -396,7 +396,7 @@ class Project(object):
             sens_sim_df = self._model_jacobian.query(query_str)
             self._scale_factors[measure_name].update_sf_gradient(measure_sim_df, measure_exp_df, sens_sim_df)
 
-    def _calc_scale_factors_prior_jacobian(self):
+    def calc_scale_factors_prior_jacobian(self):
         """
         prior penalty is: ((log(B(theta)) - log_B_prior) / sigma_b_prior)**2
 
@@ -407,10 +407,16 @@ class Project(object):
         for measure_name in self._scale_factors:
             grad = self._scale_factors[measure_name].calc_sf_prior_gradient()
             if grad is not None:
+                grad.name = measure_name
                 scale_factor_priors_jacobian.append(grad)
-        return np.array(scale_factor_priors_jacobian)
 
-    def _calc_scale_factors_prior_residuals(self):
+        if len(scale_factor_priors_jacobian):
+            scale_factor_priors_jacobian = DataFrame(scale_factor_priors_jacobian)
+        else:
+            scale_factor_priors_jacobian = DataFrame([], columns=self.get_ordered_project_params())
+        return scale_factor_priors_jacobian
+
+    def calc_scale_factors_prior_residuals(self):
         sf_residuals = []
         index = []
 
@@ -427,33 +433,37 @@ class Project(object):
     # Parameter Priors
     ##########################################################################################################
 
-    def _calc_parameters_prior_jacobian(self):
+    def calc_parameters_prior_jacobian(self):
         """
         Since all parameters are already in logspace, and the priors are all in log space:
         parameter_prior = (log(theta) - log_prior / sigma) **2 -
         We work with log(theta) directly, so d(log(theta))/d(log(theta)) is 1.
         """
         index = []
-        parameter_priors_jacobian_list = []
+        parameter_priors_jacobian = []
         ordered_params = self.get_ordered_project_params()
 
         for parameter_group in self._parameter_priors:
             for setting in self._parameter_priors[parameter_group]:
 
-                jac = np.zeros((self.n_project_params,))
+                grad = np.zeros((self.n_project_params,))
                 p_idx = self._project_param_idx[parameter_group][setting]
                 p_name = ordered_params[p_idx]
                 index.append(p_name)
                 #log_p_value = self._project_param_vector[p_idx]
                 #exp_inv = 1 / np.exp(log_p_value)
-                jac[p_idx] = 1.0
-                parameter_priors_jacobian_list.append(jac)
+                grad[p_idx] = 1.0
+                parameter_priors_jacobian.append(grad)
 
-        parameter_priors_jacobian = np.array(parameter_priors_jacobian_list)
-        parameter_priors_jacobian = DataFrame(parameter_priors_jacobian, index=index, columns=ordered_params)
+        if len(parameter_priors_jacobian):
+            parameter_priors_jacobian = np.array(parameter_priors_jacobian)
+            parameter_priors_jacobian = DataFrame(parameter_priors_jacobian, index=index, columns=ordered_params)
+
+        else:
+            parameter_priors_jacobian = DataFrame([], columns=ordered_params)
         return parameter_priors_jacobian
 
-    def _calc_parameters_prior_residuals(self):
+    def calc_parameters_prior_residuals(self):
         """
         Due to internal use of OrderedDict for _parameter_priors and _parameter_priors[parameter_group] the
         order in which the residuals and the jacobian are calculated is the same
@@ -784,15 +794,10 @@ class Project(object):
             self._update_scale_factors()
 
         measurement_residuals = self.calculate_residuals()
+        scale_factor_priors_residuals = self.calc_scale_factors_prior_residuals()
+        parameter_priors_residuals = self.calc_parameters_prior_residuals()
 
-        project_residuals = measurement_residuals
-        if self.use_parameter_priors and len(self._parameter_priors):
-            parameter_priors_residuals = self._calc_parameters_prior_residuals()
-            project_residuals = np.hstack((project_residuals, parameter_priors_residuals))
-
-        if self.use_scale_factors_priors and len(self.scale_factors):
-            scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
-            project_residuals = np.hstack((project_residuals, scale_factor_priors_residuals.ravel()))
+        project_residuals = concat([measurement_residuals, scale_factor_priors_residuals, parameter_priors_residuals])
 
         return project_residuals
 
@@ -832,44 +837,37 @@ class Project(object):
         if not self.caching or not np.alltrue(project_param_vector == self._project_param_vector):
             self.reset_calcs()
             self._project_param_vector = np.copy(project_param_vector)
-
-            self._simulate_all_measurements()
+            self._update_measure_simulations()
             self._update_scale_factors()
-            self._update_measure_residuals()
-
-            self._calc_model_jacobian()
+            self._updated_measure_jacobian()
             self._update_scale_factors_gradient()
 
         elif not self.caching or self._model_jacobian is None:
-            self._calc_model_jacobian()
+            self._updated_measure_jacobian()
             self._update_scale_factors_gradient()
 
-        measurements_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
-        res_idx = 0
-        for exp_jac, exp_sim in zip(self._model_jacobian, self._mapped_unscaled_simulations):
-            for measure_name in exp_jac:
-                measure_sim = exp_sim[measure_name]['value']
-                measure_sim_jac = exp_jac[measure_name]
-                if self.use_scale_factors[measure_name]:
-                    sf = self._scale_factors[measure_name].sf
-                    sf_grad = self._scale_factors[measure_name].gradient
-                    jac = measure_sim_jac * sf + sf_grad.T * measure_sim[:, np.newaxis]
-                    # f(theta) = B(theta)*Y_sim(theta)
-                    # df/dtheta = J
-                    # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
-                else:
-                    jac = measure_sim_jac
-                measurements_jacobian[res_idx:res_idx + len(measure_sim), :] = jac
-                res_idx += len(measure_sim)
+        scale_factor_model_jac = []
 
-        project_jacobian = measurements_jacobian
-        if self.use_parameter_priors and len(self._parameter_priors):
-            parameter_priors_jacobian = self._calc_parameters_prior_jacobian()
-            project_jacobian = np.vstack((project_jacobian, parameter_priors_jacobian))
+        for measure_name in self.use_scale_factors:
+            # f(theta) = B(theta)*Y_sim(theta)
+            # df/dtheta = J
+            # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
 
-        if self.use_scale_factors_priors and len(self.scale_factors):
-            sf_priors_jacobian = self._calc_scale_factors_prior_jacobian()
-            project_jacobian = np.vstack((project_jacobian, sf_priors_jacobian))
+            query_str = 'measure_name == "%s"' % measure_name
+            measure_jac = self._model_jacobian.query(query_str)
+            measure_jac = measure_jac.drop("timepoints", axis=1)
+            measure_sim = self._mapped_unscaled_simulations.query(query_str)["values"]
+            measure_sf_grad = self._scale_factors[measure_name].gradient
+            measure_sf = self._scale_factors[measure_name].sf
+
+            jac = measure_jac * measure_sf + measure_sf_grad.T.values * measure_sim.values[:, np.newaxis]
+            scale_factor_model_jac.append(jac)
+        scale_factor_model_jac = concat(scale_factor_model_jac)
+
+        scale_factor_priors_jacobian = self.calc_scale_factors_prior_jacobian()
+        parameter_priors_jacobian = self.calc_parameters_prior_jacobian()
+
+        project_jacobian = concat([scale_factor_model_jac, scale_factor_priors_jacobian, parameter_priors_jacobian])
 
         return project_jacobian
 
