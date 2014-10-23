@@ -1,7 +1,7 @@
 __author__ = 'Federico Vaggi'
 
 import numpy as np
-from pandas import MultiIndex, concat
+from pandas import MultiIndex, concat, DataFrame
 
 ###############################################################################
 # Simple mapping functions
@@ -41,30 +41,41 @@ def direct_model_jac_to_measure_jac(model_jacobian, measurement, mapping_paramet
     return mapped_jac
 
 
-def sum_model_vars_to_measure(model_sim, model_timepoints, experiment, measurement, mapping_parameters):
+def sum_model_vars_to_measure(model_sim, measurement, mapping_parameters):
     model_variable_idxs = mapping_parameters
     _, _, measure_timepoints = measurement.get_nonzero_measurements()
-    exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
+    exp_t_idx = np.searchsorted(model_sim['timepoints'], measure_timepoints)
 
-    measure_sim = np.zeros((len(exp_t_idx),))
+    mapped_df = np.zeros((len(exp_t_idx),))
     for v in model_variable_idxs:
-        measure_sim += model_sim[exp_t_idx, v]
+        mapped_df += model_sim.iloc[exp_t_idx, v]
 
-    return measure_sim, exp_t_idx
+    mapped_df = DataFrame(mapped_df, columns=['values'])
+    mapped_df['timepoints'] = model_sim['timepoints'].values[exp_t_idx].copy()
+
+    return mapped_df
 
 
-def sum_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment, measurement, mapping_parameters):
+def sum_model_jac_to_measure_jac(model_jacobian, measurement, mapping_parameters):
     model_variable_idxs = mapping_parameters
-    n_exp_params = len(experiment.param_global_vector_idx)
-    _, _, measure_timepoints = measurement.get_nonzero_measurements()
-    exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
+    jac_columns = model_jacobian.columns.tolist()
 
-    measure_jac = np.zeros((len(exp_t_idx), n_exp_params))
+    col_str = ",".join(jac_columns)
+    n_exp_params = col_str.count("dy0/")
+    # Count with respect to how many parameters is a variable differentiated
+
+    _, _, measure_timepoints = measurement.get_nonzero_measurements()
+    exp_t_idx = np.searchsorted(model_jacobian['timepoints'], measure_timepoints)
+
+    mapped_jac = np.zeros((len(exp_t_idx), n_exp_params))
     for v in model_variable_idxs:
         v *= n_exp_params
-        measure_jac += model_jacobian[exp_t_idx, v:(v + n_exp_params)]
+        mapped_jac += model_jacobian[exp_t_idx, v:(v + n_exp_params)]
 
-    return measure_jac
+    mapped_jac = DataFrame(mapped_jac, columns=jac_columns[:-1])
+    mapped_jac['timepoints'] = model_jacobian['timepoints'].values[exp_t_idx].copy()
+
+    return mapped_jac
 
 
 ###############################################################################
