@@ -622,7 +622,7 @@ class Project(object):
         try:
             self._project_param_idx[parameter][parameter_setting]
         except KeyError:
-            raise KeyError('%s with settings %s not in the project parameters')
+            raise KeyError('%s with settings %s not in the project parameters' % (parameter, parameter_setting))
         if parameter not in self._parameter_priors:
             self._parameter_priors[parameter] = OrderedDict()
             """This is an OrderedDict within an OrderedDict.  Iteration order is guaranteed to be stable"""
