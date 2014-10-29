@@ -176,8 +176,12 @@ class Project(object):
             all_fixed_pars = project_fixed_pars + exp_fixed_pars
 
             for p in project_fixed_pars:
-                assert(p in exp_fixed_pars)
-                # If some parameters are marked as globally fixed, each experiment must provide a value.
+                try:
+                    assert(p in exp_fixed_pars)
+                    # If some parameters are marked as globally fixed, each experiment must provide a value.
+                except AssertionError:
+                    raise ValueError('%s was declared as a fixed parameter, but in experiment %s no value provided'
+                                     % (p, experiment.name))
 
             for p in global_pars:
                 if p not in all_fixed_pars:
@@ -812,7 +816,7 @@ class Project(object):
             out[experiment.name] = exp_sim
         return out
 
-    def calc_rss_gradient(self, project_param_vector):
+    def calc_rss_gradient(self, project_param_vector, *args):
         """
         Returns the gradient of the cost function (the residual sum of squares).
 
@@ -840,8 +844,8 @@ class Project(object):
         --------
         calc_project_jacobian
         """
-        jacobian_matrix = self.calc_project_jacobian(project_param_vector)
         residuals = self(project_param_vector)
+        jacobian_matrix = self.calc_project_jacobian(project_param_vector)
         return (jacobian_matrix.T * residuals).sum(axis=1)
 
     def calc_sum_square_residuals(self, project_param_vector):
