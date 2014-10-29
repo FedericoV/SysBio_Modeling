@@ -1,11 +1,7 @@
 from collections import OrderedDict
-
-import numpy as np
-
-
-
 from scipy.integrate import odeint
 from abstract_model import ModelABC
+import numpy as np
 
 
 class OdeModel(ModelABC):
