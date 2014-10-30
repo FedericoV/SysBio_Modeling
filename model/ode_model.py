@@ -67,38 +67,35 @@ class OdeModel(ModelABC):
             if self.sens_model_jac is not None:
                 self.sens_model_jac = hope_jit(self._unijitted_sens_model_jac)
 
-            self._jit_enabled = True
+        else:
+            raise ValueError('jit_type has to be "hope" or "numba"')
+
+        self._jit_enabled = True
 
     def calc_jacobian(self, experiment_params, t_sim, init_conditions):
         # TODO: BROKEN COMMENTS
         """
-        Calculates the jacobian of the model, evaluated using the `experiment` specific parameters.
-
-        The jacobian of the model is: :math:`J = \\frac{\\partial Y_{sim}}{\\partial \\theta}`
-
-        Since the model is often evaluated in log-space, the jacobian includes the chain rule term.
-
-        :math:`Y_{sim}` is evaluated at all timepoints where there is a measurement.
+        Simulates the model including the sensitivity equations.
 
         Parameters
         ----------
-        project_param_vector: :class:`~numpy:numpy.ndarray`
-            An (n,) dimensional array containing the parameters being optimized in the project
-        experiment: Experiment
-            The specific experiment for which we want to create the parameter vector
-        variable_idx: dict
-            A dict mapping the experimental measures to state variables of the model
+        experiment_params: :class:`~numpy:numpy.ndarray`
+            An (n,) dimensional array containing the parameters of the model
+        t_sim: :class:`~numpy:numpy.ndarray`
+            An (t,) dimensional array containing the timesteps at which to simulate the model
+        init_conditions: :class:`~numpy:numpy.ndarray`
+            An (k,) dimensional array containing the initial conditions of the model, where k = m + n*m
+            where m is the number of state variables in the original model, and n is the number of parameters
 
         Returns
         -------
-        jacobian_dict: dict
-            A dict with keys equal to the experimental measures, and values equal to the jacobian of the model
-            with respect to the global parameters.
+        sensitivity_eqns: :class:`~numpy:numpy.ndarray`
+            An (len(t_sim), n*m) dimensional array containing the sensitivity of each of the m state variables
+            with respect to the n-non fixed parameters
 
         Notes
         -----
-        The jacobian is returned with respect to the global parameters, not the model parameters.\n
-        The jacobian with respect to global parameters that aren't in the experiment will thus be zero.
+        The jacobian is returned with respect to the model parameters, not the global parameters
         """
 
         yout = np.zeros_like(init_conditions)
@@ -127,20 +124,20 @@ class OdeModel(ModelABC):
 
         Parameters
         ----------
-        project_param_vector: :class:`~numpy:numpy.ndarray`
-            An (n,) dimensional array containing the parameters being optimized in the project
-        experiment: Experiment
-            The experiment we wish to simulate
-        mapping_struct: dict
-            A dict mapping the experimental measures to state variables of the model
-        all_timepoints: bool, optional
-            If false, the function is evaluated only for the timepoints for which there is
-            an experimental measurement.
+        experiment_params: :class:`~numpy:numpy.ndarray`
+            An (n,) dimensional array containing the parameters of the model
+        t_sim: :class:`~numpy:numpy.ndarray`
+            An (t,) dimensional array containing the timesteps at which to simulate the model
+        init_conditions: :class:`~numpy:numpy.ndarray` , optional
+            An (m,) dimensional array containing the initial conditions of the model, where m is the number
+            of state variables in the model.
+            Default: init_conditions = np.zeros((m,))
 
         Returns
         -------
-        exp_sim: dict
-            A dictionary containing the values of the simulation.
+        model_sim: :class:`~numpy:numpy.ndarray`
+            An (len(t_sim), m) dimensional array containing the simulation at the timesteps
+            specified by t_sim
         """
         if init_conditions is None:
             init_conditions = np.zeros((self._n_vars,))
