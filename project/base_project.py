@@ -409,7 +409,7 @@ class Project(object):
                     # p_project_idx is the index of a parameter in the project vector
                 except KeyError:
                     if p_name not in experiment.fixed_parameters:
-                        raise KeyError('%s not in %s fixed parameters.')
+                        raise KeyError('%s not in %s fixed parameters.' % (p_name, experiment.name))
                     else:
                         continue
                         # We don't calculate the jacobian wrt fixed parameters.
@@ -569,10 +569,14 @@ class Project(object):
             del_indices[exp_idx] = False
 
         # Have to traverse in reverse order to remove highest idx experiments first
+        deleted_experiments = []
+
         for exp_idx in reversed(removed_exp_idx):
             self.experiments_weights = np.delete(self.experiments_weights, exp_idx)
-            self._experiments.pop(exp_idx)
+            deleted_experiments.append(self._experiments.pop(exp_idx))
+
         self._update_project_settings()
+        return deleted_experiments
 
         if len(self._experiments) == 0:
             warnings.warn('Project has no more experiments')
