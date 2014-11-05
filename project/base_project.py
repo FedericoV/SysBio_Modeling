@@ -994,3 +994,47 @@ class Project(object):
         j = self.calc_project_jacobian(project_param_vector)
         h = np.dot(j.T, j)
         return h
+
+    def plot_experiments(self, settings_groups=None):
+        # TODO: Multiple measurements
+        import matplotlib.pyplot as plt
+
+        grouped_experiments = defaultdict(list)
+
+        for exp_idx, experiment in enumerate(self._experiments):
+            group = []
+            for setting in settings_groups:
+                if setting not in experiment.settings:
+                    raise KeyError('%s is not a setting in experiment %s' % (setting, experiment.name))
+                else:
+                    group.append(experiment.settings[setting])
+            group = tuple(group)  # So we can hash it
+            grouped_experiments[group].append(experiment)
+
+        for group in grouped_experiments:
+            # First, count how many different measurements there
+            measured_variables = set()
+
+            for experiment in grouped_experiments[group]:
+                for measurement in experiment.measurements:
+                    measured_variables.add(measurement.variable_name)
+
+            n_measures = len(measured_variables)
+            fig, axs = plt.subplots(n_measures)
+            if n_measures == 1:
+                axs = [axs]
+
+            for m_var_name, ax in zip(measured_variables, axs):
+                for experiment in grouped_experiments[group]:
+                    measurement = experiment.get_variable_measurements(m_var_name)
+                    measurement.plot_measurement(ax=ax)
+
+            fig.title(group.__repr__())
+
+        return grouped_experiments
+
+
+
+
+
+
