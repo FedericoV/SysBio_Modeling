@@ -27,6 +27,6 @@ class TimecourseMeasurement(MeasurementABC):
             fig = plt.figure()
             ax = fig.add_subplot(111)
         if len(kwargs) == 0:
-            kwargs = {'color': 'red', 'marker': 'o', 'linestyle': '--'}
+            kwargs = {'marker': 'o', 'linestyle': '--'}
         ax.errorbar(self.timepoints, self.values, self.std, **kwargs)
         return ax
