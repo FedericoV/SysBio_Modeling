@@ -72,6 +72,13 @@ class OdeModel(ModelABC):
 
         self._jit_enabled = True
 
+    def disable_jit(self):
+        self._model = self._unjitted_model
+        self.sens_model = self._unjitted_sens_model
+        self.model_jac = self._unjitted_model_jac
+        self.sens_model_jac = self._unijitted_sens_model_jac
+        self._jit_enabled = False
+
     def calc_jacobian(self, experiment_params, t_sim, init_conditions):
         # TODO: BROKEN COMMENTS
         """
