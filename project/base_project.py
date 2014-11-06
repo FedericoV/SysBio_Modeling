@@ -5,8 +5,7 @@ import copy
 import numpy as np
 
 from scale_factors import LinearScaleFactor
-from model import OdeModel
-from .utils import OrderedHashDict, exp_param_transform, exp_param_transform_derivative
+from .utils import OrderedHashDict
 from . import utils
 
 
@@ -502,7 +501,7 @@ class Project(object):
         return np.array(parameter_prior_residuals)
 
     ##########################################################################################################
-    # Public API
+    # Setters and Getters
     ##########################################################################################################
 
     @property
@@ -576,10 +575,11 @@ class Project(object):
             deleted_experiments.append(self._experiments.pop(exp_idx))
 
         self._update_project_settings()
-        return deleted_experiments
 
         if len(self._experiments) == 0:
             warnings.warn('Project has no more experiments')
+
+        return deleted_experiments
 
     def measure_iterator(self, measure_name):
         if type(measure_name) is str:
@@ -834,6 +834,8 @@ class Project(object):
         .. math::
             \\frac{\\partial C}{\\partial \\theta}
 
+        The *args parameter is there for compatibility with the ampgo solver.
+
         Parameters
         ----------
         project_param_vector: :class:`~numpy:numpy.ndarray`
@@ -995,10 +997,10 @@ class Project(object):
         h = np.dot(j.T, j)
         return h
 
-    def plot_experiments(self, settings_groups=None):
-        # TODO: Multiple measurements
-        import matplotlib.pyplot as plt
-
+    def group_experiments(self, settings_groups):
+        """
+        Returns a dictionary with experiments with same settings grouped together
+        """
         grouped_experiments = defaultdict(list)
 
         for exp_idx, experiment in enumerate(self._experiments):
@@ -1010,6 +1012,20 @@ class Project(object):
                     group.append(experiment.settings[setting])
             group = tuple(group)  # So we can hash it
             grouped_experiments[group].append(experiment)
+
+        return grouped_experiments
+
+    def plot_experiments(self, settings_groups=None, label=None, plot_simulations=True):
+        # TODO: fix labels
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import rgb2hex
+        import seaborn as sns
+
+        if settings_groups is not None:
+            grouped_experiments = self.group_experiments(settings_groups)
+        else:
+            grouped_experiments = {e.name: e for e in self.experiments}
+            # Each experiment by itself
 
         for group in grouped_experiments:
             # First, count how many different measurements there
@@ -1024,17 +1040,34 @@ class Project(object):
             if n_measures == 1:
                 axs = [axs]
 
-            for m_var_name, ax in zip(measured_variables, axs):
-                for experiment in grouped_experiments[group]:
-                    measurement = experiment.get_variable_measurements(m_var_name)
-                    measurement.plot_measurement(ax=ax)
+            for measure_name, ax in zip(measured_variables, axs):
+                ax.hold(True)
+                sf = self._scale_factors[measure_name].sf
+                palette = sns.color_palette("hls", len(grouped_experiments[group]))
+                # For each group, we want to plot different variables in different groups
+                for c_idx, experiment in enumerate(grouped_experiments[group]):
+                    color = rgb2hex(palette[c_idx])
 
-            fig.title(group.__repr__())
+                    measurement = experiment.get_variable_measurements(measure_name)
+                    measurement.plot_measurement(ax=ax, color=color, marker='o', linestyle='--')
 
-        return grouped_experiments
+                    exp_idx = self.get_experiment_index(experiment.name)
+                    exp_sim = self._all_sims[exp_idx][measure_name]
+                    sim_data = exp_sim['value']
+                    sim_t = exp_sim['timepoints']
+                    ax.plot(sim_t, sim_data * sf, color=color)
 
+            fig.suptitle(group.__repr__())
 
+        residuals = OrderedDict()
+        experiment = self._experiments[exp_idx]
 
+        # exp_weight = self.experiments_weights[exp_idx]
+        # TODO: Make exp weights usable
 
+        for measurement in experiment.measurements:
+            measure_name = measurement.variable_name
+            sf = self._scale_factors[measure_name].sf
 
-
+            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
+            sim_data = self._all_sims[exp_idx][measure_name]['value']
