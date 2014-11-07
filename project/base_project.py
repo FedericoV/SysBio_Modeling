@@ -1015,7 +1015,7 @@ class Project(object):
 
         return grouped_experiments
 
-    def plot_experiments(self, settings_groups=None, label=None, plot_simulations=True):
+    def plot_experiments(self, settings_groups=None, labels=None, plot_simulations=True):
         # TODO: fix labels
         import matplotlib.pyplot as plt
         from matplotlib.colors import rgb2hex
@@ -1058,16 +1058,3 @@ class Project(object):
                     ax.plot(sim_t, sim_data * sf, color=color)
 
             fig.suptitle(group.__repr__())
-
-        residuals = OrderedDict()
-        experiment = self._experiments[exp_idx]
-
-        # exp_weight = self.experiments_weights[exp_idx]
-        # TODO: Make exp weights usable
-
-        for measurement in experiment.measurements:
-            measure_name = measurement.variable_name
-            sf = self._scale_factors[measure_name].sf
-
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = self._all_sims[exp_idx][measure_name]['value']
