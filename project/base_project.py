@@ -662,7 +662,7 @@ class Project(object):
             exp_settings = sorted(exp_settings)
             print '%s  total_settings: %d ' % (p_group, len(exp_settings))
             for exp_set in exp_settings:
-                print '%s, %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
+                print '%s, measurements for param: %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
                 total_params += 1
                 print '\n***********************'
 
@@ -956,12 +956,6 @@ class Project(object):
                 param_dict[p_group][exp_settings] = param_vector[global_idx]
         return param_dict
 
-    def model_hessian(self, project_param_vector):
-        pass
-
-    def parameter_uncertainty(self, project_param_vector):
-        pass
-
     def calc_scale_factors_entropy(self, temperature=1.0):
         """
         Calculates the entropy from the scale factors.  Currently only log priors are supported.
@@ -979,7 +973,7 @@ class Project(object):
         param_vector: float
             The sum of the entropy of all scale factors in the model
         """
-        entropy = 0
+        entropy = 0.0
         for measure_name in self._measurement_to_model_map:
             if self.use_scale_factors[measure_name]:
                 sf_iter = self.measure_iterator(measure_name)
@@ -991,11 +985,6 @@ class Project(object):
         rss = self.calc_sum_square_residuals(project_param_vector)
         entropy = self.calc_scale_factors_entropy(temperature)
         return rss - temperature * entropy
-
-    def hessian(self, project_param_vector):
-        j = self.calc_project_jacobian(project_param_vector)
-        h = np.dot(j.T, j)
-        return h
 
     def group_experiments(self, settings_groups):
         """
@@ -1058,3 +1047,19 @@ class Project(object):
                     ax.plot(sim_t, sim_data * sf, color=color)
 
             fig.suptitle(group.__repr__())
+
+    def print_project_report(self):
+        """" Prints all project settings"""
+        # TODO: Make a pandas DataFrame for nice formatting of parameter priors/settings/values, etc
+
+        # First, experiments:
+        print "Experiments In Project:"
+        for e in self._experiments:
+            print e.name
+
+        print "________________________\n\n"
+        print "Parameters in Project:"
+        self.print_param_settings()
+
+        print "________________________\n\n"
+        print "Priors on Parameters:"
