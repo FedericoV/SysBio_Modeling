@@ -1034,6 +1034,8 @@ class Project(object):
                 sf = self._scale_factors[measure_name].sf
                 palette = sns.color_palette("hls", len(grouped_experiments[group]))
                 # For each group, we want to plot different variables in different groups
+                ymax = 0
+
                 for c_idx, experiment in enumerate(grouped_experiments[group]):
                     color = rgb2hex(palette[c_idx])
 
@@ -1045,6 +1047,12 @@ class Project(object):
                     sim_data = exp_sim['value']
                     sim_t = exp_sim['timepoints']
                     ax.plot(sim_t, sim_data * sf, color=color)
+
+                    if np.max(sim_data * sf) > ymax:
+                        ymax = np.max(sim_data * sf)
+
+                ax.set_ylim((0, ymax))
+
 
             fig.suptitle(group.__repr__())
 
