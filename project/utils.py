@@ -7,14 +7,23 @@ import numpy as np
 ###############################################################################
 
 
-def direct_model_var_to_measure(model_sim, model_timepoints, experiment, measurement, mapping_parameters):
+def direct_model_var_to_measure(model_sim, model_timepoints, experiment, measurement, mapping_parameters,
+                                use_experimental_timepoints=True):
     """"
     Given a vector of simulated species model_sim, and the timepoints at which it's simulated model_timepoints,
     and a vector of measurements and the measurement of the timepoints, it maps the species to the measurement"""
     model_idx = mapping_parameters
-    _, _, measure_timepoints = measurement.get_nonzero_measurements()
-    exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
-    return model_sim[exp_t_idx, model_idx], exp_t_idx
+
+    if use_experimental_timepoints:
+        _, _, measure_timepoints = measurement.get_nonzero_measurements()
+        exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
+        mapped_sim = model_sim[exp_t_idx, model_idx]
+        mapped_timepoints = model_timepoints[exp_t_idx]
+    else:
+        mapped_sim = model_sim[:, model_idx]
+        mapped_timepoints = model_timepoints
+
+    return mapped_sim, mapped_timepoints
 
 
 def direct_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment, measurement, mapping_parameters):

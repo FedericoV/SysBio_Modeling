@@ -277,7 +277,7 @@ class Project(object):
             exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
-    def _map_model_sim_to_measures(self, model_sim, t_sim, experiment):
+    def _map_model_sim_to_measures(self, model_sim, t_sim, experiment, use_experimental_timepoints=True):
         """
         Maps a model simulation to a particular measurement.  This is necessary because not all model variables
         map cleanly to a single measurement.
@@ -291,16 +291,19 @@ class Project(object):
             mapping_parameters = mapping_struct['parameters']
 
             measure_sim_dict[measure_name] = {}
-            mapped_sim, exp_t_idx = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
-                                                                    mapping_parameters)
-
+            mapped_sim, mapped_timepoints = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
+                                                                            mapping_parameters,
+                                                                            use_experimental_timepoints)
             measure_sim_dict[measure_name]['value'] = mapped_sim
-            measure_sim_dict[measure_name]['timepoints'] = t_sim[exp_t_idx]
+            measure_sim_dict[measure_name]['timepoints'] = mapped_timepoints
         return measure_sim_dict
 
-    def _sim_experiments(self, exp_subset='all'):
+    def _sim_experiments(self, exp_subset='all', use_experimental_timepoints=True):
         """
         Simulates all the experiments in the project.
+
+        use_experimental_timepoints should always be true when the simulations are used to calculate
+        scale factors.
         """
 
         if self._project_param_vector is None:
@@ -314,12 +317,13 @@ class Project(object):
             for exp_idx in exp_subset:
                 simulated_experiments.append(self._experiments[exp_idx])
 
+        self._all_sims = []
         for experiment in simulated_experiments:
             experiment_parameters = self._get_experiment_parameters(experiment)
             t_end = experiment.get_unique_timepoints()[-1]
             t_sim = np.linspace(0, t_end, 1000)
             model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
-            mapped_sim = self._map_model_sim_to_measures(model_sim, t_sim, experiment)
+            mapped_sim = self._map_model_sim_to_measures(model_sim, t_sim, experiment, use_experimental_timepoints)
             self._all_sims.append(mapped_sim)
 
     def _calc_experiment_residuals(self, exp_idx):
@@ -799,27 +803,6 @@ class Project(object):
 
         return project_jacobian
 
-    def simulate_all_variables(self, project_param_vector, exp_subset='all'):
-        out = {}
-
-        if not np.alltrue(project_param_vector == self._project_param_vector):
-            self.reset_calcs()
-            self._project_param_vector = np.copy(project_param_vector)
-
-        simulated_experiments = []
-
-        if exp_subset is 'all':
-            simulated_experiments = self._experiments
-        else:
-            for exp_idx in exp_subset:
-                simulated_experiments.append(self._experiments[exp_idx])
-
-        for experiment in simulated_experiments:
-            exp_sim = self._model.simulate_experiment(self._project_param_vector, experiment,
-                                                      self._measurement_to_model_map, return_mapped_sim=False)
-            out[experiment.name] = exp_sim
-        return out
-
     def calc_rss_gradient(self, project_param_vector, *args):
         """
         Returns the gradient of the cost function (the residual sum of squares).
@@ -1004,12 +987,18 @@ class Project(object):
 
         return grouped_experiments
 
-    def plot_experiments(self, settings_groups=None, labels=None, plot_simulations=True):
+    def plot_experiments(self, settings_groups=None, labels=None, plot_simulations=True,
+                         use_experimental_timepoints=True):
         # TODO: fix labels
         import matplotlib.pyplot as plt
         from matplotlib.colors import rgb2hex
         import seaborn as sns
 
+        if not use_experimental_timepoints:
+            self._sim_experiments(use_experimental_timepoints=False)
+            # We simulate again, this time with all timepoints, after SF are already calculated.
+
+        # We try to group together experiments according to the settings.
         if settings_groups is not None:
             grouped_experiments = self.group_experiments(settings_groups)
         else:
@@ -1052,7 +1041,6 @@ class Project(object):
                         ymax = np.max(sim_data * sf)
 
                 ax.set_ylim((0, ymax))
-
 
             fig.suptitle(group.__repr__())
 
