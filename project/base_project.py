@@ -543,26 +543,27 @@ class Project(object):
         # Now we update the project parameter settings.
         self._update_project_settings()
 
-    def remove_experiment(self, experiment_name):
-        removed_exp_idx = self.get_experiment_index(experiment_name)
+    def remove_experiments_by_settings(self, settings):
+        """
+        Removes all experiments with the specified settings
 
-        self.experiments_weights = np.delete(self.experiments_weights, removed_exp_idx)
-        self._experiments.pop(removed_exp_idx)
-        self._update_project_settings()
+        Parameters
+        ----------
+        settings: dict
+            A dictonary of {setting_name: setting}.  All experiments for which all setting match are removed
+        """
 
-    def remove_experiments_by_settings(self, list_of_settings):
+        # Iterate through experiments and find all matches
         removed_exp_idx = []
-
         for exp_idx, experiment in enumerate(self._experiments):
-            for settings in list_of_settings:
-                all_equal = 1
-                for setting in settings:
-                    if setting not in experiment.settings:
-                        raise KeyError('%s is not a setting in experiment %s' % (setting, experiment.name))
-                    if not (experiment.settings[setting] == settings[setting]):
-                        all_equal = 0
-                if all_equal and exp_idx not in removed_exp_idx:
-                    removed_exp_idx.append(exp_idx)
+            all_equal = 1
+            for setting in settings:
+                if setting not in experiment.settings:
+                    raise KeyError('%s is not a setting in experiment %s' % (setting, experiment.name))
+                if not (experiment.settings[setting] == settings[setting]):
+                    all_equal = 0
+            if all_equal and exp_idx not in removed_exp_idx:
+                removed_exp_idx.append(exp_idx)
 
         if len(removed_exp_idx) == 0:
             raise KeyError('None of the settings chosen were in the experiments in the project')
