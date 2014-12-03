@@ -108,7 +108,7 @@ class Experiment(object):
         for measurement in self.measurements:
             if variable_name == measurement.variable_name:
                 return measurement
-        raise KeyError('%s not in measurements' %variable_name)
+        raise KeyError('%s not in measurements' % variable_name)
 
     def add_measurement(self, measurement):
         """
@@ -128,7 +128,6 @@ class Experiment(object):
             for existing_measurement in self.measurements:
                 if measurement.variable_name == existing_measurement.variable_name:
                     if (type(existing_measurement) and type(measurement)) is TimecourseMeasurement:
-                        raise KeyError('%s already has timeseries data associated with this experiment')
+                        raise KeyError('%s already has timeseries data associated with this experiment' % self.name)
                     # Two steady state measurements are OK provided they are wrt different parameters.
             self.measurements.append(measurement)
-
