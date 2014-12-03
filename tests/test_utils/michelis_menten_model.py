@@ -1,7 +1,7 @@
 __author__ = 'Federico Vaggi'
 import os
 
-from symbolic import make_sensitivity_model
+
 
 
 n_vars = 2
@@ -35,6 +35,7 @@ def michelis_menten(y, t, *args):
 
 if __name__ == '__main__':
     from scipy.integrate import odeint
+    from symbolic import make_jit_model
     import numpy as np
 
     init_conditions = [0.01, 0]
@@ -51,11 +52,11 @@ if __name__ == '__main__':
     sens_jit_model = os.path.join(os.getcwd(), 'sens_jittable_mm_model.py')
     sens_jit_fh = open(sens_jit_model, 'w')
     mm_fh = open(os.path.realpath(__file__))
-    make_sensitivity_model(mm_fh, sens_jit_fh)
+    make_jit_model(mm_fh, sens_jit_fh)
     mm_fh.close()
 
     jit_model = os.path.join(os.getcwd(), 'jittable_mm_model.py')
     jit_fh = open(jit_model, 'w')
 
     mm_fh = open(os.path.realpath(__file__))
-    make_sensitivity_model(mm_fh, jit_fh, calculate_sensitivities=False)
+    make_jit_model(mm_fh, jit_fh, calculate_sensitivities=False)

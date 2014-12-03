@@ -25,7 +25,6 @@ class TestExperiment(TestCase):
         simple_exp = TestExperiment.simple_exp
         simple_exp.get_variable_measurements('Not_There')
 
-
     def test_get_unique_timepoints(self):
         """
         Get unique timepoints across two measurements
@@ -46,3 +45,16 @@ class TestExperiment(TestCase):
         assert(np.array_equal(unique_t, sorted_t))  # Check that it is sorted
         assert (len(np.setdiff1d(exp_timepoints, sorted_t)) == 0)   # Check that all elements are there
         assert (len(np.setdiff1d(exp_timepoints_2, sorted_t)) == 0)  # Check that all elements are there
+
+    @raises(KeyError)
+    def test_add_measure(self):
+
+        exp_timepoints = np.array([0.         ,  11.11111111,   22.22222222,   33.33333333,
+                                   44.44444444,  55.55555556,   66.66666667,   77.77777778,
+                                   88.88888889,  100.])
+        exp_measures = np.array([0.74524402,  1.53583955,  2.52502335,  3.92107899,  4.58210253,
+                                 5.45036258,  7.03185055,  7.75907324,  9.30805318,  9.751119])
+        measure2 = TimecourseMeasurement('Variable_1', np.log(exp_measures), exp_timepoints)
+
+        TestExperiment.simple_exp.add_measurement(measure2)
+

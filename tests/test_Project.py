@@ -230,7 +230,7 @@ class TestProject(TestCase):
     @raises(KeyError)
     def test_remove_absent_experiment(self):
         proj = TestProject.proj
-        proj.remove_experiment('Fake_Experiment')
+        proj.remove_experiments_by_settings({'Absent:', 5})
 
     def test_add_experiment(self):
         #############################################################################################
@@ -250,6 +250,7 @@ class TestProject(TestCase):
         proj.add_experiment(simple_exp)
         ###############################################################################################
 
+        # Trying to add the experiment
         present = 0
         for experiment in proj.experiments:
             if experiment.name == 'Simple_Experiment':
@@ -258,7 +259,8 @@ class TestProject(TestCase):
         if present == 0:
             raise AssertionError('Unable to add experiment to project')
 
-        proj.remove_experiment('Simple_Experiment')
+        # Trying to remove it now
+        proj.remove_experiments_by_settings({'Deg_Rate': 'Very High'})
         present = 0
         for experiment in proj.experiments:
             if experiment.name == 'Simple_Experiment':
@@ -266,24 +268,10 @@ class TestProject(TestCase):
 
         n_experiments = len(list(proj.experiments))
         n_experiment_weights = len(proj.experiments_weights)
-
         if n_experiments != n_experiment_weights:
             raise AssertionError('Weight vector not updated properly')
-
         if present == 1:
             raise AssertionError('Unable to remove experiment from project')
-
-        proj.add_experiment(simple_exp)
-        proj.remove_experiments_by_settings([{'Deg_Rate': 'Very High'}])
-        for experiment in proj.experiments:
-            if experiment.name == 'Simple_Experiment':
-                present = 1
-
-        if present == 1:
-            raise AssertionError('Unable to remove experiment from project')
-
-    def test_experiment_weights(self):
-        raise AssertionError('Not Implemented Yet')
 
     def test_experiment_settings(self):
         raise AssertionError('Not Implemented Yet')
@@ -390,9 +378,6 @@ class TestProject(TestCase):
         mm_model = ode_model.OdeModel(model, sens_model, 2, ordered_params)
         sf_groups = [frozenset(['Substrate', 'Product'])]
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
-        #proj.use_scale_factors['Substrate'] = False
-        #proj.use_scale_factors['Product'] = False
-        # Note - for these to work, they would have to have the same scale factor.
 
         proj.use_parameter_priors = True
         proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
@@ -414,8 +399,8 @@ class TestProject(TestCase):
         prod_sim = proj._all_sims[0]['Product']['value']
         prod_t = proj._all_sims[0]['Product']['timepoints']
 
-        assert (proj._scale_factors['Product'].sf == proj._scale_factors['Substrate'].sf)
-
+        assert (proj._scale_factors['Product'].sf is proj._scale_factors['Substrate'].sf)
+        # They have to have the same scale factor.
 
         #print proj.scale_factors
 

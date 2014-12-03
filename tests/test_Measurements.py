@@ -15,7 +15,6 @@ class TestTimecourseMeasurement(TestCase):
         exp_measures = np.array([0.74524402,  1.53583955,  2.52502335,  3.92107899,  4.58210253,
                                  5.45036258,  7.03185055,  7.75907324,  9.30805318,  9.751119])
         measure = TimecourseMeasurement('Variable_1', np.log(exp_measures), exp_timepoints)
-
         cls.measure = measure
 
     @raises(ValueError)
@@ -34,7 +33,7 @@ class TestTimecourseMeasurement(TestCase):
     @raises(ValueError)
     def test_wrong_std(self):
         """
-        Experiments where the number of timepoints is different from the
+        Experiments where the number of standard deviations is different from the
         number of measurements should raise an error
         """
         exp_timepoints = np.array([0.         ,  11.11111111,   22.22222222,   33.33333333,
