@@ -355,11 +355,11 @@ class TestProject(TestCase):
         assert np.allclose(sens_jac, num_jac, atol=0.00001)
         #############################################################################################
 
-        out = geo_leastsq(proj, np.zeros((5,)), jacobian=proj.calc_project_jacobian,
-                          tols=[1e-3, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
-                                -1.49012e-06, -1e3])
+        fit_params = geo_leastsq(proj, np.zeros((5,)), jacobian=proj.calc_project_jacobian,
+                                 tols=[1e-3, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
+                                       -1.49012e-06, -1e3])
 
-        proj.calc_sum_square_residuals(out)
+        proj.calc_sum_square_residuals(fit_params)
         fit_sim = proj._all_sims[0]['Total']['value']
         fit_t = proj._all_sims[0]['Total']['timepoints']
 
@@ -382,7 +382,10 @@ class TestProject(TestCase):
         proj.use_parameter_priors = True
         proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
 
-        random_params = np.random.randn(5)
+        #proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.5)
+        # Strong prior around 1
+
+        random_params = fit_params + np.random.randn(5)
         res = proj(random_params)
         jac = proj.calc_project_jacobian(random_params)
 
@@ -399,15 +402,19 @@ class TestProject(TestCase):
         prod_sim = proj._all_sims[0]['Product']['value']
         prod_t = proj._all_sims[0]['Product']['timepoints']
 
-        assert (proj._scale_factors['Product'].sf is proj._scale_factors['Substrate'].sf)
-        # They have to have the same scale factor.
+        assert (proj._scale_factors['Product'] is proj._scale_factors['Substrate'])
+        # They are the same scale factor
 
-        #print proj.scale_factors
+        sf = proj._scale_factors['Product'].sf
 
-        plt.plot(sub_t, sub_sim, 'r-')
-        plt.plot(t_sim, sim[:, 0], 'ro')
-        plt.plot(prod_t, prod_sim, 'b-')
-        plt.plot(t_sim, sim[:, 1], 'bo')
+        print proj.scale_factors
+        print sub_sim
+        print residuals
+
+        plt.plot(sub_t, sub_sim*sf, 'r-')
+        #plt.plot(t_sim, sim[:, 0], 'ro')
+        #plt.plot(prod_t, prod_sim*sf, 'b-')
+        #plt.plot(t_sim, sim[:, 1], 'bo')
         plt.show()
 
         residuals = proj(out)

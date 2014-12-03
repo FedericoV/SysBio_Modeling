@@ -617,7 +617,9 @@ class Project(object):
 
     def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
         if measure_name not in self._measurement_to_model_map:
-            raise KeyError('%s not in project measures' % measure_name)
+            if measure_name not in self._scale_factors:
+            # Maybe it's a scale factor group
+                raise KeyError('%s not in project measures' % measure_name)
         if self.use_scale_factors[measure_name] is False:
             raise ValueError("Cannot set priors on a scale factor we are not calculating")
 
