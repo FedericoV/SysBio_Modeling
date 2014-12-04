@@ -285,6 +285,7 @@ class TestProject(TestCase):
         from test_utils.sens_jittable_mm_model import sens_model
         from test_utils.michelis_menten_model import michelis_menten
         from leastsq_mod import leastsq as geo_leastsq
+        import nlopt
         import matplotlib.pyplot as plt
 
         init_conditions = [0.0, 0]
@@ -309,7 +310,7 @@ class TestProject(TestCase):
         proj.use_scale_factors['Total'] = False
 
         param_dict = {'vmax': {'Global': vmax}, 'km': {'Global': km}, 'k_synt_s': {'Global': k_synt_s},
-                        'k_deg_s': {'Global': k_deg_s}, 'k_deg_p': {'Global': k_deg_p}}
+                      'k_deg_s': {'Global': k_deg_s}, 'k_deg_p': {'Global': k_deg_p}}
         sorted_param_vector = proj.project_param_dict_to_vect(param_dict)
         log_sorted_param_vector = np.log(sorted_param_vector)
         #############################################################################################
@@ -346,8 +347,8 @@ class TestProject(TestCase):
         this is only approximately true
         """
 
-        def calc_all_sims(p):
-            proj(p)
+        def calc_all_sims(pars):
+            proj(pars)
             return proj._all_sims[0]['Total']['value']
 
         num_jac = approx_fprime(log_sorted_param_vector, calc_all_sims, centered=True)
@@ -367,6 +368,7 @@ class TestProject(TestCase):
         plt.plot(fit_t, fit_sim, 'r-')
         plt.plot(t_sim, np.sum(sim, axis=1), 'ro')
         plt.show()
+        #############################################################################################
 
         # try fitting S & P separately
         substrate_measure = TimecourseMeasurement('Substrate', sim[:, 0], t_sim)
@@ -380,22 +382,23 @@ class TestProject(TestCase):
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
 
         proj.use_parameter_priors = True
-        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 5)
-
-        #proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.5)
+        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
+        proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
         # Strong prior around 1
 
-        random_params = fit_params + np.random.randn(5)
-        res = proj(random_params)
-        jac = proj.calc_project_jacobian(random_params)
+        # NLopt Optimization
+        random_params = np.random.randn(5)
+        opt = nlopt.opt(nlopt.GN_CRS2_LM, proj.n_project_params)
+        high_bounds = np.ones_like(random_params) * 8
+        low_bounds = np.ones_like(random_params) * -8
+        opt.set_upper_bounds(high_bounds)
+        opt.set_lower_bounds(low_bounds)
+        opt.set_min_objective(proj.nlopt_fcn)
+        opt.set_maxtime(5)
+        nlopt_params = opt.optimize(random_params)
 
-        assert (res.shape[0] == jac.shape[0])
-
-        out = geo_leastsq(proj, random_params, jacobian=proj.calc_project_jacobian,
-                          tols=[1e-6, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
-                                -1.49012e-06, -1e3])
-
-        proj.calc_sum_square_residuals(out)
+        # Getting simulated values out.
+        residuals = proj(nlopt_params)
         sub_sim = proj._all_sims[0]['Substrate']['value']
         sub_t = proj._all_sims[0]['Substrate']['timepoints']
 
@@ -407,34 +410,21 @@ class TestProject(TestCase):
 
         sf = proj._scale_factors['Product'].sf
 
-        print proj.scale_factors
-        print sub_sim
-        print residuals
-
         plt.plot(sub_t, sub_sim*sf, 'r-')
-        #plt.plot(t_sim, sim[:, 0], 'ro')
-        #plt.plot(prod_t, prod_sim*sf, 'b-')
-        #plt.plot(t_sim, sim[:, 1], 'bo')
+        plt.plot(t_sim, sim[:, 0], 'ro')
+        plt.plot(prod_t, prod_sim*sf, 'b-')
+        plt.plot(t_sim, sim[:, 1], 'bo')
         plt.show()
 
-        residuals = proj(out)
-        scale_priors = proj.get_scale_factor_priors()
         param_priors = proj.get_parameter_priors()
 
+        #############################################################################################
         n_param_priors = 0
         for p in param_priors:
-            for setting in param_priors[p]:
+            for _ in param_priors[p]:
                 n_param_priors += 1
-
         assert (n_param_priors == 1)
 
-
-
-
-
-
-
-
-
-
-
+        #############################################################################################
+        jac = proj.calc_project_jacobian(random_params)
+        assert (residuals.shape[0] == jac.shape[0])
