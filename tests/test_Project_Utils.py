@@ -61,6 +61,11 @@ class TestProject(TestCase):
         hashdict['aafdadf'] = 'set'
         hashdict[frozenset(['aafdadf', 'b'])] = 'hi'
 
+    @raises(TypeError)
+    def test_nonstring_frozenset(self):
+        hashdict = OrderedHashDict()
+        hashdict[frozenset(['hi', 3])] = 'hello'
+
     def test_hashdict_partial_duplicates(self):
         hashdict = OrderedHashDict()
         hashdict['a'] = 'set'
@@ -72,7 +77,6 @@ class TestProject(TestCase):
 
     def test_hashdict_itersequence(self):
         import random
-        hashdict = OrderedHashDict()
         nums = range(200)
         random.shuffle(nums)
         chars = [chr(n) for n in nums]

@@ -81,6 +81,11 @@ from collections import OrderedDict
 
 
 class OrderedHashDict(OrderedDict):
+    """An ordered dictionary that can only store frozensets of strings or strings.
+
+    A string can only appear within either a frozenset, or stand alone as a string.  This is used
+    to store the groups for the scaling factor."""
+
     def __getitem__(self, key):
         try:
             _v = super(OrderedHashDict, self).__getitem__(key)
@@ -111,21 +116,29 @@ class OrderedHashDict(OrderedDict):
             else:
                 for k in key:
                     if k in self:
-                        hashgroup = self[k]
                         raise KeyError("%s already in dict in a hashgroup" % key)
+
+                # It's a new frozenset, validate it.
+                for k in key:
+                    if type(k) != str:
+                        raise TypeError("Every element within the frozenset has to be a string")
                 super(OrderedHashDict, self).__setitem__(key, value)
 
-        else:  # It's a string
+        # It's a string
+        else:
+            # It's a new string, add it
             if key not in self:
                 super(OrderedHashDict, self).__setitem__(key, value)
 
-            else:  # The string is the dict, either as a hashgroup or as a key
+            # The string is the dict, either as a hashgroup or as a key
+            else:
                 found = False
                 for _k in self.keys():
                     if _k == key:
                         super(OrderedHashDict, self).__setitem__(key, value)
                         found = True
 
+                # The string is in the dict, in a frozenset.  Use the full frozenset to update it.
                 if not found:
                     raise KeyError("%s already in dict in a hashgroup" % key)
 
