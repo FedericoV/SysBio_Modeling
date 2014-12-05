@@ -39,7 +39,7 @@ def direct_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment
 
 
 def sum_model_vars_to_measure(model_sim, model_timepoints, experiment, measurement, mapping_parameters,
-                                use_experimental_timepoints=True):
+                              use_experimental_timepoints=True):
 
     model_variable_idxs = mapping_parameters
     _, _, measure_timepoints = measurement.get_nonzero_measurements()
