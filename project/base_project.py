@@ -3,6 +3,7 @@ import warnings
 import copy
 
 import numpy as np
+import pandas as pd
 
 from scale_factors import LinearScaleFactor
 from .utils import OrderedHashDict
@@ -259,6 +260,21 @@ class Project(object):
     ##########################################################################################################
     # Private Simulation Methods
     ##########################################################################################################
+    def _measurements_as_dataframe(self):
+        measurement_df = np.zeros((3, 0))
+        df_index = []
+        for experiment in self._experiments:
+            for measurement in experiment.measurements:
+                vals = measurement.get_nonzero_measurements()
+                vals = np.array(vals)
+                measurement_df = np.hstack((measurement_df, vals))
+
+                for i in range(vals.shape[1]):
+                    df_index.append((experiment.name, measurement.variable_name))
+
+        df_index = pd.MultiIndex.from_tuples(df_index)
+        measurement_df = pd.DataFrame(np.array(measurement_df).T, index=df_index, columns=['Values', 'STD', 'Timepoints'])
+        return measurement_df
 
     def _get_experiment_parameters(self, experiment):
         """
