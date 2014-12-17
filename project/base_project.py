@@ -92,6 +92,12 @@ class Project(object):
                 if sf_type == 'linear':
                     self._scale_factors[measure_group] = LinearScaleFactor()
 
+        # All Project Measurements in a DataFrame:
+        self._measurement_df = None
+
+        # All Project Simulations in a DataFrame
+        self._simulations_df.values[:] = 0
+
         # Variables modified upon simulation:
         self._all_sims = []
         self._all_residuals = None
@@ -107,8 +113,6 @@ class Project(object):
         self.use_parameter_priors = False  # Use the parameter priors in the Jacobian calculation
         self.use_scale_factors_priors = False  # Use the scale factor priors in the Jacobian calculation
 
-        self.caching = True
-
     ##########################################################################################################
     # Methods that update private variables
     ##########################################################################################################
@@ -119,6 +123,11 @@ class Project(object):
         # Convenience variables that depend on constructor arguments.
         self._n_residuals = self._set_n_residuals()
         self._measurements_idx = self._set_measurement_idx()
+        self._measurement_df = self._measurements_as_dataframe()
+
+        self._simulations_df = self._measurement_df.copy()
+        self._simulations_df.drop('std', axis=1, inplace=True)
+        self._simulations_df.values[:] = 0
 
     def _set_local_param_idx(self):
         """
@@ -273,7 +282,10 @@ class Project(object):
                     df_index.append((experiment.name, measurement.variable_name))
 
         df_index = pd.MultiIndex.from_tuples(df_index)
-        measurement_df = pd.DataFrame(np.array(measurement_df).T, index=df_index, columns=['Values', 'STD', 'Timepoints'])
+        measurement_df = pd.DataFrame(np.array(measurement_df).T, index=df_index, columns=['values', 'std',
+                                                                                           'timepoints'])
+        measurement_df = measurement_df.swaplevel(0, 1, axis=0)
+        measurement_df.sortlevel(inplace=True)
         return measurement_df
 
     def _get_experiment_parameters(self, experiment):
@@ -310,9 +322,8 @@ class Project(object):
             mapped_sim, mapped_timepoints = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
                                                                             mapping_parameters,
                                                                             use_experimental_timepoints)
-            measure_sim_dict[measure_name]['value'] = mapped_sim
-            measure_sim_dict[measure_name]['timepoints'] = mapped_timepoints
-        return measure_sim_dict
+            self._simulations_df.ix[(measure_name, experiment.name)]['values'] = mapped_sim
+            self._simulations_df.ix[(measure_name, experiment.name)]['timepoints'] = mapped_timepoints
 
     def _sim_experiments(self, exp_subset='all', use_experimental_timepoints=True):
         """
@@ -333,45 +344,32 @@ class Project(object):
             for exp_idx in exp_subset:
                 simulated_experiments.append(self._experiments[exp_idx])
 
-        self._all_sims = []
         for experiment in simulated_experiments:
             experiment_parameters = self._get_experiment_parameters(experiment)
             t_end = experiment.get_unique_timepoints()[-1]
             t_sim = np.linspace(0, t_end, 1000)
             model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
-            mapped_sim = self._map_model_sim_to_measures(model_sim, t_sim, experiment, use_experimental_timepoints)
-            self._all_sims.append(mapped_sim)
+            self._map_model_sim_to_measures(model_sim, t_sim, experiment, use_experimental_timepoints)
 
-    def _calc_experiment_residuals(self, exp_idx):
-        """Returns the residuals between simulations (after scaling) and experimental measurement.
-        """
-        residuals = OrderedDict()
-        experiment = self._experiments[exp_idx]
-
-        # exp_weight = self.experiments_weights[exp_idx]
-        # TODO: Make exp weights usable
-
-        for measurement in experiment.measurements:
-            measure_name = measurement.variable_name
-            sf = self._scale_factors[measure_name].sf
-
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = self._all_sims[exp_idx][measure_name]['value']
-
-            residuals[measure_name] = (sim_data * sf - exp_data) / exp_std
-
-        return residuals
-
-    def _calc_all_residuals(self):
+    def _calc_residuals(self):
         """
         Calculates residuals between the simulations, scaled by the scaling factor and the simulations.
         Has to be called after simulations and scaling factors are calculated
         """
-        _all_residuals = []
-        for exp_idx, experiment in enumerate(self._experiments):
-            exp_res = self._calc_experiment_residuals(exp_idx)
-            _all_residuals.append(exp_res)
-        self._all_residuals = _all_residuals
+        residuals = pd.Series()
+        for measure_name in self._measurements_idx:
+            sf = self._scale_factors[measure_name].sf
+
+            sim = self._simulations_df.ix[measure_name]['values']
+            exp_data = self._measurement_df.ix[measure_name]['values']
+            exp_std = self._measurement_df.ix[measure_name]['std']
+
+            measure_residuals = (sim*sf - exp_data) / exp_std
+            new_index = pd.MultiIndex.from_product([[measure_name], measure_residuals.index])
+            measure_residuals.index = new_index
+            residuals = residuals.append(measure_residuals)
+
+        return residuals
 
     ##########################################################################################################
     # Sensitivity Methods
@@ -694,13 +692,13 @@ class Project(object):
         residual_array: :class:`~numpy:numpy.ndarray`
             An (m,) dimensional array where m is the number of residuals
         """
-        if not self.caching or not np.alltrue(project_param_vector == self._project_param_vector):
-            self.reset_calcs()
-            self._project_param_vector = np.copy(project_param_vector)
 
-            self._sim_experiments()
-            self._update_scale_factors()
-            self._calc_all_residuals()
+        self.reset_calcs()
+        self._project_param_vector = np.copy(project_param_vector)
+
+        self._sim_experiments()
+        self._update_scale_factors()
+        self._calc_all_residuals()
 
         measurement_residuals = np.zeros((self._n_residuals,))
         res_idx = 0
@@ -753,20 +751,15 @@ class Project(object):
         calc_project_jacobian: :class:`~numpy:numpy.ndarray`
             An (n, m) array where m is the number of residuals and n is the number of global parameters.
         """
-        if not self.caching or not np.alltrue(project_param_vector == self._project_param_vector):
-            self.reset_calcs()
-            self._project_param_vector = np.copy(project_param_vector)
+        self.reset_calcs()
+        self._project_param_vector = np.copy(project_param_vector)
 
-            self._sim_experiments()
-            self._update_scale_factors()
-            self._calc_all_residuals()
+        self._sim_experiments()
+        self._update_scale_factors()
+        self._calc_all_residuals()
 
-            self._calc_model_jacobian()
-            self._update_scale_factors_gradient()
-
-        elif not self.caching or self._model_jacobian is None:
-            self._calc_model_jacobian()
-            self._update_scale_factors_gradient()
+        self._calc_model_jacobian()
+        self._update_scale_factors_gradient()
 
         measurements_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
         res_idx = 0
