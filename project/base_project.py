@@ -659,36 +659,9 @@ class Project(object):
         self._model_jacobian = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
-    def print_param_settings(self):
-        """
-        Prints out all the parameters combinations in the project in a fancy way
-        """
-        total_params = 0
-        for p_group in self._project_param_idx:
-            exp_settings = self._project_param_idx[p_group].keys()
-            exp_settings = sorted(exp_settings)
-            print '%s  total_settings: %d ' % (p_group, len(exp_settings))
-            for exp_set in exp_settings:
-                print '%s, measurements for param: %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
-                total_params += 1
-                print '\n***********************'
-
-    def get_parameter_settings(self):
-        """
-        Returns the dictionary containing all the parameter settings, and their index in the parameter vector
-        """
-        return copy.deepcopy(self._project_param_idx)
-
-    def get_ordered_project_params(self):
-        project_params = []
-        for p_group in self._project_param_idx:
-            exp_settings = self._project_param_idx[p_group].keys()
-            for exp_set in exp_settings:
-                global_idx = self._project_param_idx[p_group][exp_set]
-                global_p_name = p_group + ' ' + ''.join([str(setting) for setting in exp_set])
-                project_params.append((global_p_name, global_idx))
-        project_params.sort(key=lambda x: x[1])
-        return zip(*project_params)[0]
+    ##########################################################################################################
+    # Public Simulation Methods
+    ##########################################################################################################
 
     def __call__(self, project_param_vector):
         """
@@ -887,6 +860,55 @@ class Project(object):
             grad[:] = self.calc_rss_gradient(project_param_vector)
         return self.calc_sum_square_residuals(project_param_vector)
 
+    def calc_scale_factors_entropy(self, temperature=1.0):
+        """
+        Calculates the entropy from the scale factors.  Currently only log priors are supported.
+
+        This term is useful when doing sampling (and optimization) to keep the sampling function
+        in a narrow range near the minima.
+
+        Parameters
+        ----------
+        temperature: float, optional
+            The temperature for the evaluation of the entropy
+
+        Returns
+        -------
+        entropy: float
+            The sum of the entropy of all scale factors in the model
+        """
+        entropy = 0.0
+        for measure_name in self._measurement_to_model_map:
+            if self.use_scale_factors[measure_name]:
+                sf_iter = self.measure_iterator(measure_name)
+                entropy += temperature * self._scale_factors[measure_name].calc_scale_factor_entropy(sf_iter,
+                                                                                                     temperature)
+        return entropy
+
+    def free_energy(self, project_param_vector, temperature=1):
+        """
+        Calculates the free energy (see Sethna papers) of a particular parameter set.
+
+        Parameters
+        ----------
+        project_param_vector: :class:`~numpy:numpy.ndarray`
+            An (n,) dimensional array containing the parameters being optimized in the project
+
+        Returns
+        -------
+        free_energy : float
+            The free energy of the project
+
+        """
+        rss = self.calc_sum_square_residuals(project_param_vector)
+        entropy = self.calc_scale_factors_entropy(temperature)
+        free_energy = rss - temperature * entropy
+        return free_energy
+
+    ##########################################################################################################
+    # Saving and Loading Simulations, and fancy outputs
+    ##########################################################################################################
+
     def project_param_dict_to_vect(self, param_dict, default_value=0.0):
         """
         Loads parameters from a dictionary (default output format for saving at the end of a fit)
@@ -941,36 +963,6 @@ class Project(object):
             for exp_settings, global_idx in self._project_param_idx[p_group].items():
                 param_dict[p_group][exp_settings] = param_vector[global_idx]
         return param_dict
-
-    def calc_scale_factors_entropy(self, temperature=1.0):
-        """
-        Calculates the entropy from the scale factors.  Currently only log priors are supported.
-
-        This term is useful when doing sampling (and optimization) to keep the sampling function
-        in a narrow range near the minima.
-
-        Parameters
-        ----------
-        temperature: float, optional
-            The temperature for the evaluation of the entropy
-
-        Returns
-        -------
-        param_vector: float
-            The sum of the entropy of all scale factors in the model
-        """
-        entropy = 0.0
-        for measure_name in self._measurement_to_model_map:
-            if self.use_scale_factors[measure_name]:
-                sf_iter = self.measure_iterator(measure_name)
-                entropy += temperature * self._scale_factors[measure_name].calc_scale_factor_entropy(sf_iter,
-                                                                                                     temperature)
-        return entropy
-
-    def free_energy(self, project_param_vector, temperature=1):
-        rss = self.calc_sum_square_residuals(project_param_vector)
-        entropy = self.calc_scale_factors_entropy(temperature)
-        return rss - temperature * entropy
 
     def group_experiments(self, settings_groups):
         """
@@ -1046,6 +1038,38 @@ class Project(object):
                 ax.set_ylim((0, ymax))
 
             fig.suptitle(group.__repr__())
+
+    def print_param_settings(self):
+        """
+        Prints out all the parameters combinations in the project in a fancy way
+        """
+        total_params = 0
+        for p_group in self._project_param_idx:
+            exp_settings = self._project_param_idx[p_group].keys()
+            exp_settings = sorted(exp_settings)
+            print '%s  total_settings: %d ' % (p_group, len(exp_settings))
+            for exp_set in exp_settings:
+                print '%s, measurements for param: %d \t' % (repr(exp_set), self._residuals_per_param[p_group][exp_set])
+                total_params += 1
+                print '\n***********************'
+
+    def get_parameter_settings(self):
+        """
+        Returns the dictionary containing all the parameter settings, and their index in the parameter vector
+        """
+        return copy.deepcopy(self._project_param_idx)
+
+    def get_ordered_project_params(self):
+        project_params = []
+        for p_group in self._project_param_idx:
+            exp_settings = self._project_param_idx[p_group].keys()
+            for exp_set in exp_settings:
+                global_idx = self._project_param_idx[p_group][exp_set]
+                global_p_name = p_group + ' ' + ''.join([str(setting) for setting in exp_set])
+                project_params.append((global_p_name, global_idx))
+        project_params.sort(key=lambda x: x[1])
+        return zip(*project_params)[0]
+
 
     def print_project_report(self):
         """" Prints all project settings"""
