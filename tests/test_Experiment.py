@@ -38,8 +38,8 @@ class TestExperiment(TestCase):
 
         measure_1 = TimecourseMeasurement('Variable_1', exp_measures, exp_timepoints)
         measure_2 = TimecourseMeasurement('Variable_3', exp_measures, exp_timepoints_2)
-        exp = Experiment('Simple_Experiment', [measure_1, measure_2])
-        unique_t = exp.get_unique_timepoints(True)
+        exper = Experiment('Simple_Experiment', [measure_1, measure_2])
+        unique_t = exper.get_unique_timepoints(True)
 
         sorted_t = np.sort(unique_t)
         assert(np.array_equal(unique_t, sorted_t))  # Check that it is sorted
@@ -48,6 +48,7 @@ class TestExperiment(TestCase):
 
     @raises(KeyError)
     def test_add_measure(self):
+        """Fails because there is already another timecourse measurement of Variable_1"""
 
         exp_timepoints = np.array([0.         ,  11.11111111,   22.22222222,   33.33333333,
                                    44.44444444,  55.55555556,   66.66666667,   77.77777778,
@@ -57,4 +58,29 @@ class TestExperiment(TestCase):
         measure2 = TimecourseMeasurement('Variable_1', np.log(exp_measures), exp_timepoints)
 
         TestExperiment.simple_exp.add_measurement(measure2)
+
+    def test_lexsorted(self):
+        """Tests that measurements added remain lexsorted"""
+        b = np.ones((5,))
+
+        measure_1 = TimecourseMeasurement('aaaa', b, b)
+        measure_2 = TimecourseMeasurement('zzaa', b, b)
+        measure_3 = TimecourseMeasurement('baaa', b, b)
+        measure_4 = TimecourseMeasurement('bcaaa', b, b)
+        measure_5 = TimecourseMeasurement('125baaa', b, b)
+        measure_6 = TimecourseMeasurement('aaa11', b, b)
+
+        measure_list = [measure_1, measure_2, measure_3, measure_4, measure_5, measure_6]
+        measure_name_list = [measure.variable_name for measure in measure_list]
+        measure_name_list.sort()
+
+        exper = Experiment('Sorted_Experiment', measure_list)
+
+        for measure, m_name in zip(exper.measurements, measure_name_list):
+            assert(measure.variable_name == m_name)
+
+
+
+
+
 

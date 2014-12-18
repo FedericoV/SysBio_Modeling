@@ -41,14 +41,18 @@ class Experiment(object):
             for key, value in experiment_settings.items():
                 self.settings[key] = value
 
-        self.measurements = []
+        self._measurements = []
         if hasattr(measurements, '__iter__'):
             for measurement in measurements:
                 self.add_measurement(measurement)
 
         else:
-            self.measurements.append(measurements)  # Make sure these are unique per variable
+            self.add_measurement(measurements)
         self.param_global_vector_idx = None
+
+    @property
+    def measurements(self):
+        return self._measurements
 
     def drop_timepoint_zero(self, variable=None):
         """
@@ -57,10 +61,10 @@ class Experiment(object):
         This is useful because often we don't wish to fit the t0 of our model since
         it does not depend on the parameters.
         """
-        for measure_idx in range(len(self.measurements)):
-            measurement_variable = self.measurements[measure_idx].variable_name
+        for measure_idx in range(len(self._measurements)):
+            measurement_variable = self._measurements[measure_idx].variable_name
             if (variable is None) or (measurement_variable == variable):
-                self.measurements[measure_idx].drop_timepoint_zero()
+                self._measurements[measure_idx].drop_timepoint_zero()
 
     def get_unique_timepoints(self, include_zero=False):
         """
@@ -77,7 +81,7 @@ class Experiment(object):
             All the timepoints across all the measurements, sorted.
         """
         all_timepoints = []
-        for measurement in self.measurements:
+        for measurement in self._measurements:
             exp_timepoints = measurement.timepoints
             all_timepoints.append(exp_timepoints)
 
@@ -105,7 +109,7 @@ class Experiment(object):
         measurement: :class:`~TimecourseMeasurement:SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement`
             A measurement object
         """
-        for measurement in self.measurements:
+        for measurement in self._measurements:
             if variable_name == measurement.variable_name:
                 return measurement
         raise KeyError('%s not in measurements' % variable_name)
@@ -121,13 +125,14 @@ class Experiment(object):
         measurement: measurement: :class:`~TimecourseMeasurement:SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement`
             A new measurement to add to the experiment
         """
-        if len(self.measurements) == 0:
-            self.measurements.append(measurement)
+        if len(self._measurements) == 0:
+            self._measurements.append(measurement)
 
         else:
-            for existing_measurement in self.measurements:
+            for existing_measurement in self._measurements:
                 if measurement.variable_name == existing_measurement.variable_name:
                     if (type(existing_measurement) and type(measurement)) is TimecourseMeasurement:
                         raise KeyError('%s already has timeseries data associated with this experiment' % self.name)
                     # Two steady state measurements are OK provided they are wrt different parameters.
-            self.measurements.append(measurement)
+            self._measurements.append(measurement)
+        self._measurements.sort(key=lambda x: x.variable_name)
