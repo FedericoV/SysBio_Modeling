@@ -267,9 +267,6 @@ class TestProject(TestCase):
                 present = 1
 
         n_experiments = len(list(proj.experiments))
-        n_experiment_weights = len(proj.experiments_weights)
-        if n_experiments != n_experiment_weights:
-            raise AssertionError('Weight vector not updated properly')
         if present == 1:
             raise AssertionError('Unable to remove experiment from project')
 

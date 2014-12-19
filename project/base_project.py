@@ -5,9 +5,8 @@ import copy
 import numpy as np
 import pandas as pd
 
-from scale_factors import LinearScaleFactor
-from .utils import OrderedHashDict
 from . import utils
+from loss_functions.squared_loss import SquareLossFunction
 
 
 class Project(object):
@@ -30,22 +29,33 @@ class Project(object):
         A list of tuples of measurements that have to share the same scale factor
     """
 
-    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map, sf_type='linear',
+    def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map,
                  sf_groups=None):
         self.project_description = ""
 
         # Private variables that shouldn't be carelessly modified
+        ###############################################################################################################
         self._model = model
-        self._experiments = experiments  # A list of all the experiments in the project
         self._model_parameter_settings = model_parameter_settings
+        self._loss_function = SquareLossFunction(sf_groups)
+
+        # Take care of experiments now
+        self._experiments = []  # A list of all the experiments in the project
+        self.add_experiment(experiments)  # We use this to add the experiments to insure they are lex-sorted
+
         self._parameter_priors = OrderedDict()
+        # Priors on Parameter
+        ###############################################################################################################
 
         # Private variables that are modified depending on experiments in project
+        ###############################################################################################################
         self._project_param_idx = None
         self._n_project_params = None  # How many total parameters are there that are being optimized
         self._residuals_per_param = None  # How many data points do we have to constrain each parameter
         self._n_residuals = None  # How many data points do we have across all experiments
         self._measurements_idx = None  # The index of the experiments where a particular measurement is present
+        self._measurement_df = None
+        self._simulations_df = None
         self._update_project_settings()  # This initializes all the above variables
 
         self._measurement_to_model_map = {}
@@ -79,45 +89,21 @@ class Project(object):
                       'model_jac_to_measure_jac_func': jacobian_map_fcn}
             self._measurement_to_model_map[measure_name] = mapper
 
-        self._scale_factors = OrderedHashDict()
-        if sf_groups is None:
-            for measure_name in self._measurements_idx:
-                if sf_type == 'linear':
-                    self._scale_factors[measure_name] = LinearScaleFactor()
-        else:
-            for measure_group in sf_groups:
-                for measure_name in measure_group:
-                    if measure_name not in self._measurements_idx:
-                        raise KeyError("%s in a scale factor group, but not in any measurements" % measure_name)
-                if sf_type == 'linear':
-                    self._scale_factors[measure_group] = LinearScaleFactor()
-
-        # All Project Measurements in a DataFrame:
-        self._measurement_df = None
-
-        # All Project Simulations in a DataFrame
-        self._simulations_df.values[:] = 0
-
         # Variables modified upon simulation:
-        self._all_sims = []
-        self._all_residuals = None
+        ###############################################################################################################
         self._model_jacobian = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
         # Public variables - can modify them to change simulations.
-        self.experiments_weights = np.ones((len(experiments),))
 
-        self.use_scale_factors = OrderedHashDict()
-        for measure_group in self._scale_factors:
-            self.use_scale_factors[measure_group] = True
         self.use_parameter_priors = False  # Use the parameter priors in the Jacobian calculation
-        self.use_scale_factors_priors = False  # Use the scale factor priors in the Jacobian calculation
 
     ##########################################################################################################
     # Methods that update private variables
     ##########################################################################################################
 
     def _update_project_settings(self):
+
         self._project_param_idx, self._n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
         # Convenience variables that depend on constructor arguments.
@@ -282,9 +268,8 @@ class Project(object):
                     df_index.append((experiment.name, measurement.variable_name))
 
         df_index = pd.MultiIndex.from_tuples(df_index)
-        measurement_df = pd.DataFrame(np.array(measurement_df).T, index=df_index, columns=['values', 'std',
+        measurement_df = pd.DataFrame(np.array(measurement_df).T, index=df_index, columns=['mean', 'std',
                                                                                            'timepoints'])
-        measurement_df = measurement_df.swaplevel(0, 1, axis=0)
         measurement_df.sortlevel(inplace=True)
         return measurement_df
 
@@ -305,7 +290,7 @@ class Project(object):
             exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
-    def _map_model_sim_to_measures(self, model_sim, t_sim, experiment, use_experimental_timepoints=True):
+    def _map_model_sim_to_measures(self, model_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
         """
         Maps a model simulation to a particular measurement.  This is necessary because not all model variables
         map cleanly to a single measurement.
@@ -322,8 +307,15 @@ class Project(object):
             mapped_sim, mapped_timepoints = model_variables_to_measure_func(model_sim, t_sim, experiment, measurement,
                                                                             mapping_parameters,
                                                                             use_experimental_timepoints)
-            self._simulations_df.ix[(measure_name, experiment.name)]['values'] = mapped_sim
-            self._simulations_df.ix[(measure_name, experiment.name)]['timepoints'] = mapped_timepoints
+            extra_residuals = len(mapped_sim)
+            temp = np.array((mapped_sim, mapped_timepoints)).T
+            self._simulations_df.values[res_idx:res_idx+extra_residuals, :] = temp
+
+            #self._simulations_df.ix[(experiment.name, measure_name)].values = temp
+            #self._simulations_df.loc[(measure_name, experiment.name), 'values'] = mapped_sim
+            #self._simulations_df.loc[(measure_name, experiment.name), 'timepoints'] = mapped_timepoints
+            extra_residuals = len(mapped_sim)
+        return extra_residuals
 
     def _sim_experiments(self, exp_subset='all', use_experimental_timepoints=True):
         """
@@ -344,33 +336,14 @@ class Project(object):
             for exp_idx in exp_subset:
                 simulated_experiments.append(self._experiments[exp_idx])
 
+        residual_idx = 0
         for experiment in simulated_experiments:
             experiment_parameters = self._get_experiment_parameters(experiment)
             t_end = experiment.get_unique_timepoints()[-1]
             t_sim = np.linspace(0, t_end, 1000)
             model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
-            self._map_model_sim_to_measures(model_sim, t_sim, experiment, use_experimental_timepoints)
-
-    def _calc_residuals(self):
-        """
-        Calculates residuals between the simulations, scaled by the scaling factor and the simulations.
-        Has to be called after simulations and scaling factors are calculated
-        """
-        residuals = pd.Series()
-        for measure_name in self._measurements_idx:
-            sf = self._scale_factors[measure_name].sf
-
-            sim = self._simulations_df.ix[measure_name]['values']
-            exp_data = self._measurement_df.ix[measure_name]['values']
-            exp_std = self._measurement_df.ix[measure_name]['std']
-
-            measure_residuals = (sim*sf - exp_data) / exp_std
-            new_index = pd.MultiIndex.from_product([[measure_name], measure_residuals.index])
-            measure_residuals.index = new_index
-            residuals = residuals.append(measure_residuals)
-
-        return residuals
-
+            residual_idx += self._map_model_sim_to_measures(model_sim, t_sim, experiment,
+                                                            residual_idx, use_experimental_timepoints)
     ##########################################################################################################
     # Sensitivity Methods
     ##########################################################################################################
@@ -444,7 +417,8 @@ class Project(object):
         Analytically calculates the optimal scale factor for measurements that are in arbitrary units
         """
         for measure_name in self._scale_factors:
-            if self.use_scale_factors[measure_name]:
+
+
                 sf_iter = self.measure_iterator(measure_name)
                 self._scale_factors[measure_name].update_sf(sf_iter)
 
@@ -497,7 +471,7 @@ class Project(object):
                 #exp_inv = 1 / np.exp(log_p_value)
                 jac = np.zeros((self.n_project_params,))
                 jac[p_idx] = 1.0
-                parameter_priors_jacobian.append(jac)
+                parameter_prioqrs_jacobian.append(jac)
 
         return np.array(parameter_priors_jacobian)
 
@@ -551,8 +525,19 @@ class Project(object):
         experiment: :class:`~OdeModel:experiment.experiments.Experiment`
             An experiment
         """
-        self._experiments.append(experiment)
-        self.experiments_weights = np.append(self.experiments_weights, 1)
+        if type(experiment) is not list:
+            experiment = [experiment]
+
+        experiment_names = {e.name for e in self._experiments}
+        # Check that an experiment with that name is not already present:
+        for e in experiment:
+            if e.name not in experiment_names:
+                self._experiments.append(e)
+                experiment_names.add(e.name)
+            else:
+                raise KeyError("An Experiment with name %s is already present" % e.name)
+
+        self._experiments.sort(key=lambda x: x.name)  # Sort experiments by their name
 
         # Now we update the project parameter settings.
         self._update_project_settings()
@@ -582,15 +567,9 @@ class Project(object):
         if len(removed_exp_idx) == 0:
             raise KeyError('None of the settings chosen were in the experiments in the project')
 
-        del_indices = np.ones((len(self.experiments_weights),))
-        for exp_idx in removed_exp_idx:
-            del_indices[exp_idx] = False
-
         # Have to traverse in reverse order to remove highest idx experiments first
         deleted_experiments = []
-
         for exp_idx in reversed(removed_exp_idx):
-            self.experiments_weights = np.delete(self.experiments_weights, exp_idx)
             deleted_experiments.append(self._experiments.pop(exp_idx))
 
         self._update_project_settings()
@@ -600,7 +579,7 @@ class Project(object):
 
         return deleted_experiments
 
-    def measure_iterator(self, measure_name):
+    def measure_group_iterator(self, measure_name):
         if type(measure_name) is str:
             measure_group = [measure_name]
 
@@ -609,16 +588,7 @@ class Project(object):
             measure_group.sort()
 
         for measure_name in measure_group:
-            for exp_idx in self._measurements_idx[measure_name]:
-                experiment = self._experiments[exp_idx]
-                exp_weight = self.experiments_weights[exp_idx]
-                measurement = experiment.get_variable_measurements(measure_name)
-                sim = self._all_sims[exp_idx][measure_name]
-                try:
-                    sim_jac = self._model_jacobian[exp_idx][measure_name]  # Matrix
-                except (KeyError, TypeError):
-                    sim_jac = None
-                yield (measurement, sim, sim_jac, exp_weight)
+            yield measure_name
 
     def get_experiment(self, exp_idx):
         return copy.deepcopy(self._experiments[exp_idx])
@@ -677,7 +647,7 @@ class Project(object):
     # Public Simulation Methods
     ##########################################################################################################
 
-    def __call__(self, project_param_vector):
+    def residuals(self, project_param_vector):
         """
         Calculates the residuals between the simulated values (after optimal scaling) and the experimental values
         across all experiments in the project.  Note about order.
@@ -695,28 +665,27 @@ class Project(object):
 
         self.reset_calcs()
         self._project_param_vector = np.copy(project_param_vector)
-
         self._sim_experiments()
-        self._update_scale_factors()
-        self._calc_all_residuals()
 
-        measurement_residuals = np.zeros((self._n_residuals,))
-        res_idx = 0
-        for exp_res in self._all_residuals:
-            for res_block in exp_res.values():
-                measurement_residuals[res_idx:res_idx + len(res_block)] = res_block
-                res_idx += len(res_block)
+        return self._loss_function(self._simulations_df, self._measurement_df)
 
-        project_residuals = measurement_residuals
-        if self.use_parameter_priors and len(self._parameter_priors):
-            parameter_priors_residuals = self._calc_parameters_prior_residuals()
-            project_residuals = np.hstack((project_residuals, parameter_priors_residuals))
+        #measurement_residuals = np.zeros((self._n_residuals,))
+        #res_idx = 0
+        #for exp_res in self._all_residuals:
+        #    for res_block in exp_res.values():
+        #        measurement_residuals[res_idx:res_idx + len(res_block)] = res_block
+        #        res_idx += len(res_block)
 
-        if self.use_scale_factors_priors and len(self.scale_factors):
-            scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
-            project_residuals = np.hstack((project_residuals, scale_factor_priors_residuals.ravel()))
+        #project_residuals = measurement_residuals
+        #if self.use_parameter_priors and len(self._parameter_priors):
+        #    parameter_priors_residuals = self._calc_parameters_prior_residuals()
+        #    project_residuals = np.hstack((project_residuals, parameter_priors_residuals))
 
-        return project_residuals
+        #if self.use_scale_factors_priors and len(self.scale_factors):
+        #    scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
+        #    project_residuals = np.hstack((project_residuals, scale_factor_priors_residuals.ravel()))
+
+        #return project_residuals
 
     def calc_project_jacobian(self, project_param_vector):
         """
@@ -991,14 +960,13 @@ class Project(object):
 
         return grouped_experiments
 
-    def plot_experiments(self, settings_groups=None, labels=None, plot_simulations=True,
-                         use_experimental_timepoints=True):
+    def plot_experiments(self, settings_groups=None, labels=None, use_experimental_timepoints=True):
         # TODO: fix labels
         import matplotlib.pyplot as plt
         from matplotlib.colors import rgb2hex
         import seaborn as sns
 
-        if not use_experimental_timepoints:
+        if not use_experimental_timepoints and self._project_param_vector is not None:
             self._sim_experiments(use_experimental_timepoints=False)
             # We simulate again, this time with all timepoints, after SF are already calculated.
 
@@ -1034,15 +1002,19 @@ class Project(object):
 
                     measurement = experiment.get_variable_measurements(measure_name)
                     measurement.plot_measurement(ax=ax, color=color, marker='o', linestyle='--')
+                    if np.max(measurement.values > ymax):
+                        ymax = np.max(measurement.values)
 
                     exp_idx = self.get_experiment_index(experiment.name)
-                    exp_sim = self._all_sims[exp_idx][measure_name]
-                    sim_data = exp_sim['value']
-                    sim_t = exp_sim['timepoints']
-                    ax.plot(sim_t, sim_data * sf, color=color)
 
-                    if np.max(sim_data * sf) > ymax:
-                        ymax = np.max(sim_data * sf)
+                    if self._project_param_vector is not None:
+                        exp_sim = self._all_sims[exp_idx][measure_name]
+                        sim_data = exp_sim['value']
+                        sim_t = exp_sim['timepoints']
+                        ax.plot(sim_t, sim_data * sf, color=color)
+
+                        if np.max(sim_data * sf) > ymax:
+                            ymax = np.max(sim_data * sf)
 
                 ax.set_ylim((0, ymax))
 

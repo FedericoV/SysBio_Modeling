@@ -1,6 +1,6 @@
 __author__ = 'Federico Vaggi'
 
-from abstract_scale_factor import ScaleFactorABC
+from ..abstract_scale_factor import ScaleFactorABC
 import numpy as np
 import scipy
 import numba
@@ -16,18 +16,12 @@ def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
     lB = u + log_B_best
     return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
 
-
-def _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight=1):
-    sim_dot_exp[:] += np.sum(((exp_data/exp_std**2) * sim_data)) * exp_weight
-    sim_dot_sim[:] += np.sum(((sim_data/exp_std) * (sim_data/exp_std))) * exp_weight
-
-
 def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
-                                  sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim, exp_weight=1):
-    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1) * exp_weight  # Vector
-    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1) * exp_weight  # Vector
-    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2)) * exp_weight  # Scalar
-    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2)) * exp_weight  # Scalar
+                                  sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim):
+    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1)   # Vector
+    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1)   # Vector
+    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2))   # Scalar
+    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2))   # Scalar
 
 
 def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
@@ -40,15 +34,9 @@ class LinearScaleFactor(ScaleFactorABC):
         super(LinearScaleFactor, self).__init__(log_prior, log_prior_sigma)
         self._sf = 1.0
 
-    def update_sf(self, measure_iterator):
-        sim_dot_exp = np.zeros((1,), dtype='float64')
-        sim_dot_sim = np.zeros((1,), dtype='float64')
-
-        for (measurement, sim, model_sens, exp_weight) in measure_iterator:
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = sim['value']
-            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, 1)
-
+    def update_sf(self, sim_data, exp_data, exp_std):
+        sim_dot_exp = np.sum(((exp_data/exp_std**2) * sim_data))
+        sim_dot_sim = np.sum(((sim_data/exp_std) * (sim_data/exp_std)))
         self._sf = sim_dot_exp / sim_dot_sim
 
     def update_sf_gradient(self, measure_iterator, n_global_pars):
@@ -62,7 +50,7 @@ class LinearScaleFactor(ScaleFactorABC):
         sim_dot_sim = np.zeros((1,), dtype='float64')
         sim_dot_exp = np.zeros((1,), dtype='float64')
 
-        for (measurement, sim, model_sens, exp_weight) in measure_iterator:
+        for (measurement, sim, model_sens) in measure_iterator:
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = sim['value']
             _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
@@ -102,10 +90,10 @@ class LinearScaleFactor(ScaleFactorABC):
         sim_dot_exp = np.zeros((1,), dtype='float64')
         sim_dot_sim = np.zeros((1,), dtype='float64')
 
-        for (measurement, sim, model_sens, exp_weight) in measure_iterator:
+        for (measurement, sim, model_sens) in measure_iterator:
             exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
             sim_data = sim['value']
-            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim, exp_weight)
+            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim)
 
         self._sf = sim_dot_exp / sim_dot_sim
         log_sf = np.log(self._sf)
