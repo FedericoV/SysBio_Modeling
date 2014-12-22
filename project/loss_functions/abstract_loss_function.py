@@ -9,10 +9,10 @@ class LossFunctionABC(object):
     def __init__(self):
         pass
 
-    def __call__(self, sim_values, exp_values, exp_std):
+    def evaluate(self, simulations, experiment_measures):
         pass
 
-    def residuals(self, sim_values, exp_values, exp_std):
+    def residuals(self, simulations, experiment_measures):
         pass
 
 
