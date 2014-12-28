@@ -26,7 +26,7 @@ class TestOdeModel(TestCase):
     def test_simulate_experiment(self):
         param_vector = np.array([0.001, 0.01])
         timepoints = np.linspace(0, 100, 10)
-        y_sim = TestOdeModel.ode_model.simulate_experiment(param_vector, timepoints)
+        y_sim = TestOdeModel.ode_model.simulate(param_vector, timepoints)
 
         desired = np.array([0, 0.11049612, 0.21977129, 0.32783901, 0.43471262, 0.54040533,
                             0.64493016, 0.74830004, 0.85052773, 0.95162583])

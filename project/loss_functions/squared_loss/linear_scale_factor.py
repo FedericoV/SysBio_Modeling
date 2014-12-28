@@ -1,10 +1,11 @@
 __author__ = 'Federico Vaggi'
 
-from ..abstract_scale_factor import ScaleFactorABC
 import numpy as np
 import scipy
 import numba
-import copy
+
+from ..abstract_scale_factor import ScaleFactorABC
+
 
 ########################################################################################
 # Utility Functions

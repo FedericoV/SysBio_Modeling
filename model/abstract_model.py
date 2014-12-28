@@ -12,7 +12,7 @@ class ModelABC(object):
         self.param_order = param_order
 
     @abstractmethod
-    def simulate_experiment(self, project_param_vector, t_sim, experiment):
+    def simulate(self, parameters):
         return NotImplementedError
 
     def get_n_vars(self):

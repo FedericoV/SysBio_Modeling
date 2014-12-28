@@ -17,13 +17,13 @@ class Project(object):
     model : :class:`~OdeModel:SysBio_Modeling.model.ode_model.OdeModel`
         A model that can simulate experiments
     experiments: list
-        A sorted collection of experiments.
+        A collection of experiments.
     model_parameter_settings : dict
         How the parameters in the model vary depending on the experimental settings in the experiments
     measurement_to_model_map : dict
         A dictionary of functions that maps the variables simulated by the model to the observed
          measurements in the experiments.
-    sf_type: string, optional 
+    loss_function: string, optional, d
         How to scale simulations to map them to measurements.
     sf_groups: list
         A list of tuples of measurements that have to share the same scale factor
@@ -31,6 +31,26 @@ class Project(object):
 
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map,
                  sf_groups=None):
+        """
+
+
+        :type self: project.base_project.Project
+        :param model: An instance of the Model class that simulates experiments
+        :type model: model.ode_model.OdeModel
+        :param experiments: A list of Experiment objects
+        :type experiments: list[experiment.experiments.Experiment]
+        :param model_parameter_settings: A dictionary which specifies how each parameter in the model is affected
+            by the Experiment settings.
+        :type model_parameter_settings: OrderedDict
+        :param measurement_to_model_map: A struct that contains the necessary information to map the output of the model
+        to the measurements of the model
+        # TODO: Refactor as a class.
+        :type measurement_to_model_map: dict
+        :param sf_groups: Which measurements share scale factors
+        :type sf_groups: list[set]
+        :return:
+        :rtype: None
+        """
         self.project_description = ""
 
         # Private variables that shouldn't be carelessly modified
@@ -341,7 +361,7 @@ class Project(object):
             experiment_parameters = self._get_experiment_parameters(experiment)
             t_end = experiment.get_unique_timepoints()[-1]
             t_sim = np.linspace(0, t_end, 1000)
-            model_sim = self._model.simulate_experiment(experiment_parameters, t_sim)
+            model_sim = self._model.simulate(experiment_parameters, t_sim)
             residual_idx += self._map_model_sim_to_measures(model_sim, t_sim, experiment,
                                                             residual_idx, use_experimental_timepoints)
     ##########################################################################################################

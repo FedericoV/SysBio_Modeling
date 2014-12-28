@@ -1,8 +1,9 @@
 __author__ = 'Federico Vaggi'
 
+import numpy as np
+
 from ..abstract_loss_function import LossFunctionWithScaleFactors, DifferentiableLossFunctionABC
 from .linear_scale_factor import LinearScaleFactor
-import numpy as np
 
 
 class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctionABC):
@@ -19,9 +20,6 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
         X_i is a v
         """
         super(SquareLossFunction, self).__init__(sf_groups, LinearScaleFactor)
-
-        for measure_group in sf_groups:
-            self._scale_factors[measure_group] = LinearScaleFactor()
 
     def evaluate(self, simulations, experiment_measures):
         res_array = self.residuals(simulations, experiment_measures)
@@ -108,6 +106,6 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
 
                 group_sims = np.hstack(group_sims)
                 group_exp_measures = np.hstack(group_exp_measures)
-                self._scale_factors[measure_group].update_sf_gradient(group_sims, exp_data=group_exp_measures[:, 0],
+                self._scale_factors[measure_group].update_sf_gradient(group_sims, group_exp_measures[:, 0],
                                                                       group_exp_measures[:, 1])
 

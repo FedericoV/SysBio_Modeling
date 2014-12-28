@@ -1,5 +1,6 @@
 __author__ = 'Federico Vaggi'
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
+
 from ..utils import OrderedHashDict
 
 
@@ -24,8 +25,9 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
         super(LossFunctionWithScaleFactors, self).__init__()
         self._scale_factors = OrderedHashDict()
 
-        for measure_group in sf_groups:
-            self._scale_factors[measure_group] = SF()
+        if sf_groups is not None:
+            for measure_group in sf_groups:
+                self._scale_factors[measure_group] = SF()
 
 
 class DifferentiableLossFunctionABC(LossFunctionABC):

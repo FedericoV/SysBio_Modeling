@@ -123,7 +123,7 @@ class OdeModel(ModelABC):
         sensitivity_eqns = jacobian_sim[:, self.n_vars:]
         return sensitivity_eqns
 
-    def simulate_experiment(self, experiment_params, t_sim, init_conditions=None):
+    def simulate(self, experiment_params, t_sim, init_conditions=None):
         """
         Simulates the model using the `experiment` specific parameters.
 

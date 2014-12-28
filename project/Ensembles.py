@@ -2,7 +2,6 @@ import logging
 logger = logging.getLogger('Ensembles')
 import copy
 import shutil
-import sys
 import time
 
 import scipy
@@ -10,7 +9,6 @@ import scipy.linalg
 import scipy.stats
 import scipy.fftpack
 
-import numpy as np
 import cPickle as pickle
 
 def autocorrelation(series):

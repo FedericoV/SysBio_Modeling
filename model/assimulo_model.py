@@ -118,7 +118,7 @@ class AssimuloCVode(ModelABC):
 
         return jac
 
-    def simulate_experiment(self, experiment_params, t_sim, init_conditions=None):
+    def simulate(self, experiment_params, t_sim, init_conditions=None):
 
         self.explicit_problem.p0 = experiment_params
         self.explicit_sim = self.make_explicit_sim()
