@@ -7,6 +7,8 @@ import numba
 from ..abstract_scale_factor import ScaleFactorABC
 
 
+
+
 ########################################################################################
 # Utility Functions
 ########################################################################################
@@ -36,31 +38,21 @@ class LinearScaleFactor(ScaleFactorABC):
         self._sf = 1.0
 
     def update_sf(self, sim_data, exp_data, exp_std):
-        sim_dot_exp = np.sum(((exp_data/exp_std**2) * sim_data))
-        sim_dot_sim = np.sum(((sim_data/exp_std) * (sim_data/exp_std)))
+
+        sim_dot_exp = np.sum((sim_data * exp_data) / (exp_std ** 2))
+        sim_dot_sim = np.sum((sim_data * sim_data) / (exp_std ** 2))
         self._sf = sim_dot_exp / sim_dot_sim
 
-    def update_sf_gradient(self, measure_iterator, n_global_pars):
+    def update_sf_gradient(self, sim_data, exp_data, exp_std, sim_jac):
         """
         Analytically calculates the gradient of the scale factors for each measurement
         """
 
-        scale_factor_gradient = np.zeros((n_global_pars,), dtype='float64')
-        sens_dot_exp_data = np.zeros((n_global_pars,), dtype='float64')
-        sens_dot_sim = np.zeros((n_global_pars,), dtype='float64')
-        sim_dot_sim = np.zeros((1,), dtype='float64')
-        sim_dot_exp = np.zeros((1,), dtype='float64')
-
-        for (measurement, sim, model_sens) in measure_iterator:
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = sim['value']
-            _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens, sim_dot_exp, sim_dot_sim,
-                                          sens_dot_exp_data, sens_dot_sim, 1)
-
-        _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp,
-                               scale_factor_gradient)
-
-        self._sf_gradient = scale_factor_gradient
+        sim_dot_exp = np.sum((sim_data * exp_data) / (exp_std ** 2))
+        sim_dot_sim = np.sum((sim_data * sim_data) / (exp_std ** 2))
+        jac_dot_exp = np.sum((sim_jac.T * exp_data) / (exp_std ** 2), axis=1)
+        jac_dot_sim = np.sum(sim_jac.T * sim_data / (exp_std ** 2), axis=1)
+        self._sf_gradient = (jac_dot_exp / sim_dot_sim - 2 * sim_dot_exp * jac_dot_sim / sim_dot_sim ** 2)
 
     def calc_sf_prior_gradient(self):
         """

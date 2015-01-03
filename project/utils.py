@@ -26,28 +26,36 @@ def direct_model_var_to_measure(model_sim, model_timepoints, experiment, measure
     return mapped_sim, mapped_timepoints
 
 
-def direct_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment, measurement, mapping_parameters):
+def direct_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment, measurement, mapping_parameters,
+                                    use_experimental_timepoints=True):
     model_idx = mapping_parameters
     n_exp_params = len(experiment.param_global_vector_idx)
-    _, _, measure_timepoints = measurement.get_nonzero_measurements()
-    exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
+    start_par_idx = model_idx * n_exp_params
+    end_par_idx = start_par_idx + n_exp_params
 
-    # Mapping between experimental measurement and model variable
-    v = model_idx * n_exp_params
+    if use_experimental_timepoints:
+        _, _, measure_timepoints = measurement.get_nonzero_measurements()
+        exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
+        mapped_jac = model_jacobian[exp_t_idx, start_par_idx:end_par_idx]
+        # mapped_timepoints = model_timepoints[exp_t_idx]
+    else:
+        mapped_jac = model_jacobian[:, start_par_idx:end_par_idx]
+        # mapped_timepoints = model_timepoints
 
-    return model_jacobian[exp_t_idx, v:(v + n_exp_params)]
+    return mapped_jac
 
 
 def sum_model_vars_to_measure(model_sim, model_timepoints, experiment, measurement, mapping_parameters,
                               use_experimental_timepoints=True):
 
     model_variable_idxs = mapping_parameters
-    _, _, measure_timepoints = measurement.get_nonzero_measurements()
-    exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
 
     if use_experimental_timepoints:
+        _, _, measure_timepoints = measurement.get_nonzero_measurements()
+        exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
         mapped_timepoints = model_timepoints[exp_t_idx]
     else:
+        exp_t_idx = slice(None)
         mapped_timepoints = model_timepoints
 
     measure_sim = np.zeros((len(exp_t_idx),))
@@ -60,18 +68,25 @@ def sum_model_vars_to_measure(model_sim, model_timepoints, experiment, measureme
     return measure_sim, mapped_timepoints
 
 
-def sum_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment, measurement, mapping_parameters):
+def sum_model_jac_to_measure_jac(model_jacobian, model_timepoints, experiment, measurement, mapping_parameters,
+                                 use_experimental_timepoints=True):
     model_variable_idxs = mapping_parameters
     n_exp_params = len(experiment.param_global_vector_idx)
-    _, _, measure_timepoints = measurement.get_nonzero_measurements()
-    exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
 
-    measure_jac = np.zeros((len(exp_t_idx), n_exp_params))
+    if use_experimental_timepoints:
+        _, _, measure_timepoints = measurement.get_nonzero_measurements()
+        exp_t_idx = np.searchsorted(model_timepoints, measure_timepoints)
+        mapped_timepoints = model_timepoints[exp_t_idx]
+    else:
+        exp_t_idx = slice(None)
+        mapped_timepoints = model_timepoints
+
+    mapped_jac = np.zeros((len(exp_t_idx), n_exp_params))
     for v in model_variable_idxs:
         v *= n_exp_params
-        measure_jac += model_jacobian[exp_t_idx, v:(v + n_exp_params)]
+        mapped_jac += model_jacobian[exp_t_idx, v:(v + n_exp_params)]
 
-    return measure_jac
+    return mapped_jac
 
 
 ###############################################################################

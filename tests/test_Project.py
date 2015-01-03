@@ -1,6 +1,6 @@
 from unittest import TestCase
-from nose.tools import raises
 
+from nose.tools import raises
 import numpy as np
 from statsmodels.tools.numdiff import approx_fprime
 
@@ -8,7 +8,6 @@ from ..experiment import Experiment
 from ..measurement import TimecourseMeasurement
 from ..project import Project
 from ..model import ode_model
-
 from test_utils.simple_model_settings import settings as experiment_settings
 from test_utils.jittable_model import model
 from test_utils.sens_jittable_model import sens_model
@@ -60,7 +59,8 @@ class TestProject(TestCase):
         cls.ode_model = ode_model.OdeModel(model, sens_model, n_vars, ordered_params)
 
         measurement_to_model_map = {'Variable_1': ('direct', 0)}
-        proj = Project(cls.ode_model, experiments, experiment_settings, measurement_to_model_map)
+        proj = Project(cls.ode_model, experiments, experiment_settings, measurement_to_model_map,
+                       sf_groups=[frozenset(['Variable_1'])])
         cls.proj = proj
 
         project_param_vector = np.zeros((3,))
@@ -77,12 +77,15 @@ class TestProject(TestCase):
 
     def test__project_initialization(self):
         proj = TestProject.proj
-        _project_param_idx = proj._project_param_idx
         k_synt_settings = proj.get_param_index('k_synt')
         assert (k_synt_settings.keys() == ['Global'])
-        k_deg_settings = proj.get_param_index('Group_1')
-        assert (len(k_deg_settings) == 2)  # Two settings for k_deg
+        # Check that k_synthesis is set as a global parameter
 
+        k_deg_settings = proj.get_param_index('Group_1')
+        assert (len(k_deg_settings) == 2)
+        # Two settings for k_deg
+
+        _project_param_idx = proj.project_param_idx
         for exp in proj.experiments:
             setting = exp.settings['Deg_Rate']
             assert (_project_param_idx['Group_1'][(setting,)] == exp.param_global_vector_idx['k_deg'])
@@ -90,43 +93,38 @@ class TestProject(TestCase):
 
         assert (proj.n_project_residuals == 35)
 
-    def test_set_measurement_idx(self):
-        proj = TestProject.proj
-        assert (0 in proj._measurements_idx['Variable_1'])
-        assert (1 in proj._measurements_idx['Variable_1'])
-
     def test_sim_experiments(self):
         proj = TestProject.proj
         log_project_param_vector = TestProject.log_project_param_vector
-        proj(log_project_param_vector)
-        assert (len(proj._all_sims) == 2)
+        proj.residuals(log_project_param_vector)
+
+        # Count how many distinct experiments we have simulated:
+        sim_df = proj.get_simulations()
+        simulated_experiments = sim_df.index.levels[0].unique()
+        assert (len(simulated_experiments) == 2)
 
         for exp_idx, experiment in enumerate(proj.experiments):
             measurement = experiment.get_variable_measurements('Variable_1')
             exp_data, _, _ = measurement.get_nonzero_measurements()
             exp_data /= 3.75
-            sim = proj._all_sims[exp_idx]['Variable_1']
-            assert (np.allclose(exp_data, sim['value'], rtol=0.05))
+            sim_df = proj.get_simulations()
+            sim = sim_df.loc[(experiment.name, 'Variable_1'), :].values[:, 0]
+            assert (np.allclose(exp_data, sim, rtol=0.05))
 
-        assert (np.allclose(proj._scale_factors['Variable_1'].sf, 3.75, rtol=0.05))
-        # Excellent
+        assert (np.allclose(proj.scale_factors['Variable_1'].sf, 3.75, rtol=0.05))
 
-        for exp_idx, res_block in enumerate(proj._all_residuals):
-            experiment = proj.get_experiment(exp_idx)
-            measurement = experiment.get_variable_measurements('Variable_1')
-            exp_data, _, _ = measurement.get_nonzero_measurements()
-            total_measurement = np.sum(exp_data)
-            total_res = np.sum(res_block['Variable_1'])
-            assert (total_measurement * 0.01 > total_res)
+        project_residuals = proj.residuals(log_project_param_vector)
+        # TODO: Add accuracy check
 
-    def test_model_jacobian(self):
+    def test_variable_jacobian(self):
         proj = TestProject.proj
         log_project_param_vector = TestProject.log_project_param_vector
         project_param_vector = np.exp(log_project_param_vector)
         proj.calc_project_jacobian(log_project_param_vector)
 
-        for exp_idx, jac_block in enumerate(proj._model_jacobian):
-            experiment = proj.get_experiment(exp_idx)
+        model_jac = proj.model_jacobian_df
+
+        for experiment in proj.experiments:
             k_synt_idx = experiment.param_global_vector_idx['k_synt']
             k_deg_idx = experiment.param_global_vector_idx['k_deg']
             k_synt = project_param_vector[k_synt_idx]
@@ -138,32 +136,19 @@ class TestProject(TestCase):
             k_synt_analytical_jac = anal_jac[1, :]
             k_deg_analytical_jac = anal_jac[0, :]
 
-            k_synt_sensitivity_jac = jac_block['Variable_1'][:, k_synt_idx]
-            k_deg_sensitivity_jac = jac_block['Variable_1'][:, k_deg_idx]
+            k_synt_sensitivity_jac = model_jac.loc[(experiment.name, 'Variable_1'), :].values[:, k_synt_idx]
+            k_deg_sensitivity_jac = model_jac.loc[(experiment.name, 'Variable_1'), :].values[:, k_deg_idx]
 
             assert np.allclose(k_synt_analytical_jac, k_synt_sensitivity_jac, rtol=0.05)
             assert np.allclose(k_deg_analytical_jac, k_deg_sensitivity_jac, rtol=0.05)
 
-    def test_scale_factor_jacobian(self):
-        proj = TestProject.proj
-        log_project_param_vector = TestProject.log_project_param_vector
-        proj.calc_project_jacobian(log_project_param_vector)
-        _scale_factors_gradient = proj._scale_factors['Variable_1'].gradient
-
-        def get_scale_factors(x):
-            proj(x)
-            return proj._scale_factors['Variable_1'].sf
-
-        num_scale_factors = approx_fprime(log_project_param_vector, get_scale_factors, centered=True)
-        assert np.allclose(_scale_factors_gradient, num_scale_factors, rtol=0.01)
-
     def test_calc_project_jacobian(self):
-        # Known test failure.  Most likely due to numerical failures in scaling factor.
         proj = TestProject.proj
+
         project_param_vector = np.zeros((3,))
-        low_deg_idx = proj._project_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj._project_param_idx['Group_1'][('High',)]
-        synt_idx = proj._project_param_idx['k_synt']['Global']
+        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
+        synt_idx = proj.project_param_idx['k_synt']['Global']
 
         project_param_vector[high_deg_idx] = 0.01
         project_param_vector[low_deg_idx] = 0.001
@@ -173,17 +158,13 @@ class TestProject(TestCase):
         sens_jacobian = proj.calc_project_jacobian(log_project_param_vector)
 
         def get_scaled_sims(x):
-            proj(x)
-            sims = []
-            for sim in proj._all_sims:
-                exp_sim = sim['Variable_1']['value']
-                sims.extend(exp_sim.tolist())
-            sims = np.array(sims)
-            scale = proj._scale_factors['Variable_1'].sf
-            return sims * scale
+            proj.residuals(x)
+            sims = proj.get_simulations(scaled=True)
+            return sims.values[:, 0]
 
         num_global_jac = approx_fprime(log_project_param_vector, get_scaled_sims, centered=True)
-        assert (np.sum((num_global_jac - sens_jacobian) ** 2) < 1e-8)
+
+        assert np.allclose(num_global_jac, sens_jacobian, atol=0.000001)
 
         project_param_vector[high_deg_idx] = 0.02
         project_param_vector[low_deg_idx] = 0.003
@@ -198,9 +179,9 @@ class TestProject(TestCase):
     def test_scale_factors_change(self):
         proj = TestProject.proj
         project_param_vector = np.zeros((3,))
-        low_deg_idx = proj._project_param_idx['Group_1'][('Low',)]
-        high_deg_idx = proj._project_param_idx['Group_1'][('High',)]
-        synt_idx = proj._project_param_idx['k_synt']['Global']
+        low_deg_idx = proj.project_param_idx['Group_1'][('Low',)]
+        high_deg_idx = proj.project_param_idx['Group_1'][('High',)]
+        synt_idx = proj.project_param_idx['k_synt']['Global']
 
         project_param_vector[high_deg_idx] = 0.01
         project_param_vector[low_deg_idx] = 0.001
@@ -210,22 +191,26 @@ class TestProject(TestCase):
         mod_param_vector = np.copy(log_project_param_vector)
         mod_param_vector[0] += 0.2
 
-        proj(log_project_param_vector)
-        old_scale_factor = proj._scale_factors['Variable_1'].sf
+        proj.residuals(log_project_param_vector)
+        old_scale_factor = proj.scale_factors['Variable_1'].sf
         # Changing param vector:
-        proj(mod_param_vector)
-        new_scale_factor = proj._scale_factors['Variable_1'].sf
+        proj.residuals(mod_param_vector)
+        new_scale_factor = proj.scale_factors['Variable_1'].sf
 
         assert np.allclose(old_scale_factor, new_scale_factor, rtol=0.0001)
 
     def test_optimization(self):
-        from leastsq_mod import leastsq as geo_leastsq
-        # Known test failure.  Most likely due to numerical failures in scaling factor.
+        try:
+            from leastsq_mod import leastsq as geo_leastsq
+        except ImportError:
+            from scipy.optimize import leastsq as geo_leastsq
+            # Fallback
+    
         proj = TestProject.proj
 
         base_guess = np.log(np.ones((3,)) * 0.01)
 
-        out = geo_leastsq(proj, base_guess, Dfun=proj.calc_project_jacobian)
+        out = geo_leastsq(proj.residuals, base_guess, Dfun=proj.calc_project_jacobian)
 
     @raises(KeyError)
     def test_remove_absent_experiment(self):
@@ -281,7 +266,15 @@ class TestProject(TestCase):
         from test_utils.jittable_mm_model import model, ordered_params
         from test_utils.sens_jittable_mm_model import sens_model
         from test_utils.michelis_menten_model import michelis_menten
-        from leastsq_mod import leastsq as geo_leastsq
+
+        try:
+            from leastsq_mod import leastsq
+
+            scipy_leastsq = False
+        except ImportError:
+            from scipy.optimize import leastsq
+
+            scipy_leastsq = True
         import nlopt
         import matplotlib.pyplot as plt
 
@@ -304,7 +297,6 @@ class TestProject(TestCase):
         mm_model = ode_model.OdeModel(model, sens_model, 2, ordered_params)
         measurement_to_model_map = {'Total': ('sum', [0, 1])}
         proj = Project(mm_model, [single_experiment], {}, measurement_to_model_map)
-        proj.use_scale_factors['Total'] = False
 
         param_dict = {'vmax': {'Global': vmax}, 'km': {'Global': km}, 'k_synt_s': {'Global': k_synt_s},
                       'k_deg_s': {'Global': k_deg_s}, 'k_deg_p': {'Global': k_deg_p}}
@@ -315,8 +307,8 @@ class TestProject(TestCase):
         """
         Testing since we didn't specify any parameter settings, all parameters got set as global
         """
-        for param in proj._project_param_idx:
-            setting = proj._project_param_idx[param].keys()[0]
+        for param in proj.project_param_idx:
+            setting = proj.project_param_idx[param].keys()[0]
             assert (setting == 'Global')
         #############################################################################################
         #############################################################################################
@@ -325,7 +317,7 @@ class TestProject(TestCase):
         Testing to see that the residuals of the simulation, when using the same parameters of the ODE
         model used to generate it, are close to zero.
         """
-        residuals = proj(log_sorted_param_vector)
+        residuals = proj.residuals(log_sorted_param_vector)
         assert np.allclose(residuals, np.zeros_like(residuals), atol=0.001)
         #############################################################################################
 
@@ -345,26 +337,35 @@ class TestProject(TestCase):
         """
 
         def calc_all_sims(pars):
-            proj(pars)
-            return proj._all_sims[0]['Total']['value']
+            proj.residuals(pars)
+            sims = proj.get_simulations()
+            sim_vals = sims.loc[(slice(None), 'Total'), 'mean']
+            return sim_vals
 
         num_jac = approx_fprime(log_sorted_param_vector, calc_all_sims, centered=True)
         sens_jac = proj.calc_project_jacobian(log_sorted_param_vector)
         assert np.allclose(sens_jac, num_jac, atol=0.00001)
         #############################################################################################
-
-        fit_params = geo_leastsq(proj, np.zeros((5,)), jacobian=proj.calc_project_jacobian,
-                                 tols=[1e-3, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06, -1.49012e-06,
-                                       -1.49012e-06, -1e3])
+        random_params = np.random.randn(5).flatten()
+        if scipy_leastsq:
+            out = leastsq(proj.residuals, random_params, Dfun=proj.calc_project_jacobian, ftol=0.001,
+                          maxfev=5000)
+            fit_params = out[0]
+        else:
+            fit_params = leastsq(proj.residuals, random_params, jacobian=proj.calc_project_jacobian)
 
         proj.calc_sum_square_residuals(fit_params)
-        fit_sim = proj._all_sims[0]['Total']['value']
-        fit_t = proj._all_sims[0]['Total']['timepoints']
+        all_sim = proj.get_simulations()
+
+        fit_sim = all_sim.loc[(slice(None), 'Total'), 'mean']
+        fit_t = all_sim.loc[(slice(None), 'Total'), 'timepoints']
 
         # Plotting
-        plt.plot(fit_t, fit_sim, 'r-')
-        plt.plot(t_sim, np.sum(sim, axis=1), 'ro')
-        plt.show()
+        fig = plt.figure()
+        ax = fig.add_subplot(121)
+        ax.plot(fit_t, fit_sim, 'r-')
+        ax.plot(t_sim, np.sum(sim, axis=1), 'ro')
+        ax.set_title("Fitting Total")
         #############################################################################################
 
         # try fitting S & P separately
@@ -378,50 +379,53 @@ class TestProject(TestCase):
         sf_groups = [frozenset(['Substrate', 'Product'])]
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
 
-        proj.use_parameter_priors = True
-        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
-        proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
+        # proj.use_parameter_priors = True
+        # proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
+        # proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
         # Strong prior around 1
 
         # NLopt Optimization
-        random_params = np.random.randn(5)
+        random_params = np.random.randn(5).flatten()
         opt = nlopt.opt(nlopt.GN_CRS2_LM, proj.n_project_params)
-        high_bounds = np.ones_like(random_params) * 8
-        low_bounds = np.ones_like(random_params) * -8
+        high_bounds = np.ones_like(random_params) * 5
+        low_bounds = np.ones_like(random_params) * -5
         opt.set_upper_bounds(high_bounds)
         opt.set_lower_bounds(low_bounds)
         opt.set_min_objective(proj.nlopt_fcn)
-        opt.set_maxtime(5)
+        opt.set_maxtime(10)
         nlopt_params = opt.optimize(random_params)
 
         # Getting simulated values out.
-        residuals = proj(nlopt_params)
-        sub_sim = proj._all_sims[0]['Substrate']['value']
-        sub_t = proj._all_sims[0]['Substrate']['timepoints']
+        residuals = proj.residuals(nlopt_params)
+        all_sim = proj.get_simulations(scaled=True)
 
-        prod_sim = proj._all_sims[0]['Product']['value']
-        prod_t = proj._all_sims[0]['Product']['timepoints']
+        sub_sim = all_sim.loc[(slice(None), 'Substrate'), 'mean']
+        sub_t = all_sim.loc[(slice(None), 'Substrate'), 'timepoints']
 
-        assert (proj._scale_factors['Product'] is proj._scale_factors['Substrate'])
+        prod_sim = all_sim.loc[(slice(None), 'Product'), 'mean']
+        prod_t = all_sim.loc[(slice(None), 'Product'), 'timepoints']
+
+        sf = proj.scale_factors
+
+        assert (sf['Product'] is sf['Substrate'])
         # They are the same scale factor
 
-        sf = proj._scale_factors['Product'].sf
-
-        plt.plot(sub_t, sub_sim*sf, 'r-')
-        plt.plot(t_sim, sim[:, 0], 'ro')
-        plt.plot(prod_t, prod_sim*sf, 'b-')
-        plt.plot(t_sim, sim[:, 1], 'bo')
+        ax = fig.add_subplot(122)
+        ax.plot(sub_t, sub_sim, 'r-')
+        ax.plot(t_sim, sim[:, 0], 'ro')
+        ax.plot(prod_t, prod_sim, 'b-')
+        ax.plot(t_sim, sim[:, 1], 'bo')
+        ax.set_title("Fitting Product and Substrate")
         plt.show()
 
-        param_priors = proj.get_parameter_priors()
-
-        #############################################################################################
-        n_param_priors = 0
-        for p in param_priors:
-            for _ in param_priors[p]:
-                n_param_priors += 1
-        assert (n_param_priors == 1)
-
-        #############################################################################################
-        jac = proj.calc_project_jacobian(random_params)
-        assert (residuals.shape[0] == jac.shape[0])
+        # print sub_sim
+        # print residuals
+        print "_____________________________________"
+        out = proj.calc_sum_square_residuals(nlopt_params)
+        res = proj.residuals(nlopt_params)
+        rss = 1 / 2.0 * np.sum(res ** 2)
+        print out
+        print rss
+        print np.exp(nlopt_params)
+        print "_____________________________________"
+        assert 0

@@ -1,14 +1,14 @@
 __author__ = 'Federico Vaggi'
 
-
-from symbolic import make_jit_model
 from unittest import TestCase
-from nose.tools import raises
 import os
+
+from nose.tools import raises
 import numpy as np
 from scipy.integrate import odeint
 import numba
 
+from ..symbolic import make_jit_model
 from test_utils import simple_model
 from test_utils.jittable_model import model as unjitted_model
 from test_utils.sens_jittable_model import sens_model as sens_unjitted_model

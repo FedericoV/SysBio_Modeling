@@ -1,12 +1,10 @@
 __author__ = 'federico'
 
 from unittest import TestCase
-from collections import OrderedDict
 
 import numpy as np
-from model import OdeModel
-from project import utils
 
+from ..model import OdeModel
 from test_utils.jittable_model import model as jitted_model
 from test_utils.sens_jittable_model import sens_model as jitted_sens_model
 

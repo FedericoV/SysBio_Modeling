@@ -1,8 +1,11 @@
 from unittest import TestCase
+
 import numpy as np
-from experiment import Experiment
 from nose.tools import raises
-from measurement import TimecourseMeasurement
+
+from ..experiment import Experiment
+from ..measurement import TimecourseMeasurement
+
 
 __author__ = 'Federico Vaggi'
 

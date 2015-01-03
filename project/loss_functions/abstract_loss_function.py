@@ -1,5 +1,6 @@
 __author__ = 'Federico Vaggi'
 from abc import ABCMeta
+from copy import deepcopy
 
 from ..utils import OrderedHashDict
 
@@ -24,10 +25,15 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
         # SF is a scale factor constructor
         super(LossFunctionWithScaleFactors, self).__init__()
         self._scale_factors = OrderedHashDict()
+        self._all_sf_measures = set()
 
         if sf_groups is not None:
             for measure_group in sf_groups:
                 self._scale_factors[measure_group] = SF()
+
+    @property
+    def scale_factors(self):
+        return deepcopy(self._scale_factors)
 
 
 class DifferentiableLossFunctionABC(LossFunctionABC):

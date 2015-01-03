@@ -23,89 +23,112 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
 
     def evaluate(self, simulations, experiment_measures):
         res_array = self.residuals(simulations, experiment_measures)
-        return np.sum(res_array**2)
+        return 0.5 * np.sum(res_array ** 2)
 
     def residuals(self, simulations, experiment_measures):
-        self.update_scale_factors(simulations, experiment_measures)
-        scaled_sim_values = self.scale_sim_values(simulations)
-        # Scale residuals by scale factor
-        return 1/2.0 * (scaled_sim_values['mean'] - experiment_measures['mean']) / experiment_measures['std']
+        if len(self._scale_factors) != 0:
+            # Scale simulations by scale factor
+            self.update_scale_factors(simulations, experiment_measures)
+            simulations = self.scale_sim_values(simulations)
+
+        return (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
     def jacobian(self, simulations, experiment_measures, simulations_jacobian):
-        self.update_scale_factors(simulations, experiment_measures)
-        self.update_scale_factors_gradient(simulations, experiment_measures, simulations_jacobian)
 
         if len(self._scale_factors) == 0:
             return simulations_jacobian
 
-        else:
-            scaled_jacobian = simulations_jacobian.copy()
-            for measure_group in self._scale_factors:
-                for measure in measure_group:
-                    sf = self._scale_factors[measure].sf  # Scalar
-                    sf_grad = self._scale_factors[measure].gradient  # Vector (n_params,)
-                    measure_jac = simulations_jacobian.loc[(slice(None), measure), :].values[:, :-1]
-                    # Matrix: (n_residuals, n_params)
-                    measure_sim = simulations.loc[(slice(None), measure), :].values[:, 2]
-                    # Vector: (n_residuals)
+        self.update_scale_factors(simulations, experiment_measures)
+        self.update_scale_factors_gradient(simulations, experiment_measures, simulations_jacobian)
 
-                    scaled_jac = measure_jac * sf + sf_grad * measure_sim
-                    # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
+        scaled_jacobian = simulations_jacobian.copy()
+        for measure_group in self._scale_factors:
+            if type(measure_group) is str:
+                _measure_group = [measure_group]
+            else:
+                _measure_group = measure_group
+                # Hack to work around scale factor groups
+                # TODO: Refactor OrderedHashDict
 
-                    scaled_jacobian.loc[(slice(None), measure), :].values[:, :-1] = scaled_jac
-            return scaled_jacobian
-        # jac = measure_sim_jac * sf + sf_grad.T * measure_sim[:, np.newaxis]
+            for measure in _measure_group:
+                sf = self._scale_factors[measure].sf  # Scalar
+                sf_grad = self._scale_factors[measure].gradient  # Vector (n_params,)
+                measure_jac = simulations_jacobian.loc[(slice(None), measure), :].values
+                # Matrix: (n_residuals, n_params)
+                measure_sim = simulations.loc[(slice(None), measure), :].values[:, 0]
+                # Vector: (n_residuals)
+
+                measure_scaled_jac = measure_jac * sf + measure_sim[:, np.newaxis] * sf_grad
+                # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
+                scaled_jacobian.ix[(slice(None), measure), :] = measure_scaled_jac  # TODO: Very slow
+
+        return scaled_jacobian
 
     def scale_sim_values(self, simulations):
-        if len(self._scale_factors) == 0:
-            # Fast path
-            return simulations
+        scaled_sim_values = simulations.copy()
+        for measure_group in self._scale_factors:
+            if type(measure_group) is str:
+                _measure_group = [measure_group]
+            else:
+                _measure_group = measure_group
+                # Hack to work around scale factor groups
+                # TODO: Refactor OrderedHashDict
 
-        else:
-            scaled_sim_values = simulations.copy()
-            for measure_group in self._scale_factors:
-                for measure in measure_group:
-                    sf = self._scale_factors[measure].sf
-                    #  scaled_sim_values.loc[(slice(None), measure), 'mean'] *= sf  # TODO: Very slow.
-                    scaled_sim_values.loc[(slice(None), measure), :].values[:, 2] *= sf  # TODO: Very slow.
-
+            for measure in _measure_group:
+                sf = self._scale_factors[measure].sf
+                scaled_sim_values.loc[(slice(None), measure), 'mean'] *= sf  # TODO: Very slow.
         return scaled_sim_values
 
     def update_scale_factors(self, simulations, experiment_measures):
-        if len(self._scale_factors) == 0:
-            pass
-        else:
-            for measure_group in self._scale_factors:
-                # Multiple measures can share the same scale factor
-                group_sims = []
-                group_exp_measures = []
-                for measure in measure_group:
-                    group_sims.append(simulations.loc[(slice(None), measure), :].values[:, 0])  # Values
-                    group_exp_measures.append(experiment_measures.loc[(slice(None), measure), :].values[:, :2])
-                    # Here we get values and std
-                    # Probably slow indexing here.  Have to parse it carefully.
+        # Note - relies on carefully sorted dataframes!!
+        for measure_group in self._scale_factors:
+            if type(measure_group) is str:
+                _measure_group = [measure_group]
+            else:
+                _measure_group = measure_group
+                # Hack to work around scale factor groups
+                # TODO: Refactor OrderedHashDict
 
-                group_sims = np.hstack(group_sims)
-                group_exp_measures = np.hstack(group_exp_measures)
-                self._scale_factors[measure_group].update_sf(group_sims, group_exp_measures[:, 0],
-                                                             group_exp_measures[:, 1])
+            # Multiple measures can share the same scale factor
+            group_sims = []
+            group_exp_measures = []
+            for measure in _measure_group:
+                group_sims.append(simulations.loc[(slice(None), measure), :].values[:, 0])  # Values
+                group_exp_measures.append(experiment_measures.loc[(slice(None), measure), :].values[:, :2])
+                # Here we get values and std
+                # Probably slow indexing here.  Have to parse it carefully.
+
+            group_sims = np.hstack(group_sims)
+            group_exp_measures = np.vstack(group_exp_measures)
+
+            assert len(group_sims) == len(group_exp_measures)
+
+            self._scale_factors[measure_group].update_sf(group_sims, group_exp_measures[:, 0],
+                                                         group_exp_measures[:, 1])
 
     def update_scale_factors_gradient(self, simulations, experiment_measures, simulations_jacobian):
         if len(self._scale_factors) == 0:
             pass
         else:
             for measure_group in self._scale_factors:
-                # Multiple measures can share the same scale factor
+                if type(measure_group) is str:
+                    _measure_group = [measure_group]
+                else:
+                    _measure_group = measure_group
+
                 group_sims = []
+                group_jacs = []
                 group_exp_measures = []
-                for measure in measure_group:
+                for measure in _measure_group:
                     group_sims.append(simulations.loc[(slice(None), measure), :].values[:, 0])  # Values
                     group_exp_measures.append(experiment_measures.loc[(slice(None), measure), :].values[:, :2])
                     # Here we get values and std
-                    # Probably slow indexing here.  Have to parse it carefully.
+
+                    group_jacs.append(simulations_jacobian.loc[(slice(None), measure), :].values)
 
                 group_sims = np.hstack(group_sims)
+                group_jacs = np.hstack(group_jacs)
                 group_exp_measures = np.hstack(group_exp_measures)
                 self._scale_factors[measure_group].update_sf_gradient(group_sims, group_exp_measures[:, 0],
-                                                                      group_exp_measures[:, 1])
+                                                                      group_exp_measures[:, 1], group_jacs)
 

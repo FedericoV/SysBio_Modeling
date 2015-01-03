@@ -73,14 +73,13 @@ class Project(object):
         self._n_project_params = None  # How many total parameters are there that are being optimized
         self._residuals_per_param = None  # How many data points do we have to constrain each parameter
         self._n_residuals = None  # How many data points do we have across all experiments
-        self._measurements_idx = None  # The index of the experiments where a particular measurement is present
-        self._measurement_df = None
+        self._measurements_df = None
         self._simulations_df = None
+        self._model_jacobian_df = None
         self._update_project_settings()  # This initializes all the above variables
 
         self._measurement_to_model_map = {}
-        if set(self._measurements_idx.keys()) != set(measurement_to_model_map.keys()):
-            raise KeyError('Measurements without explicit mapping to model variables')
+        # TODO: Direct bindings
         for measure_name, (mapping_type, mapping_args) in measurement_to_model_map.items():
 
             if mapping_type == 'direct':
@@ -111,7 +110,6 @@ class Project(object):
 
         # Variables modified upon simulation:
         ###############################################################################################################
-        self._model_jacobian = None
         self._project_param_vector = np.zeros((self.n_project_params,))
 
         # Public variables - can modify them to change simulations.
@@ -128,12 +126,17 @@ class Project(object):
 
         # Convenience variables that depend on constructor arguments.
         self._n_residuals = self._set_n_residuals()
-        self._measurements_idx = self._set_measurement_idx()
-        self._measurement_df = self._measurements_as_dataframe()
+        self._measurements_df = self._measurements_as_dataframe()
 
-        self._simulations_df = self._measurement_df.copy()
+        self._simulations_df = self._measurements_df.copy()
         self._simulations_df.drop('std', axis=1, inplace=True)
         self._simulations_df.values[:] = 0
+
+        jac_cols = self.get_ordered_project_params()
+        jac_idx = self._simulations_df.index
+        self._model_jacobian_df = pd.DataFrame(np.zeros((self._n_residuals, self._n_project_params)), index=jac_idx,
+                                               columns=jac_cols)
+        # We also have to account for scale factor priors and parameter priors
 
     def _set_local_param_idx(self):
         """
@@ -276,24 +279,24 @@ class Project(object):
     # Private Simulation Methods
     ##########################################################################################################
     def _measurements_as_dataframe(self):
-        measurement_df = np.zeros((3, 0))
+        measurements_df = np.zeros((3, 0))
         df_index = []
         for experiment in self._experiments:
             for measurement in experiment.measurements:
                 vals = measurement.get_nonzero_measurements()
                 vals = np.array(vals)
-                measurement_df = np.hstack((measurement_df, vals))
+                measurements_df = np.hstack((measurements_df, vals))
 
                 for i in range(vals.shape[1]):
                     df_index.append((experiment.name, measurement.variable_name))
 
         df_index = pd.MultiIndex.from_tuples(df_index)
-        measurement_df = pd.DataFrame(np.array(measurement_df).T, index=df_index, columns=['mean', 'std',
+        measurements_df = pd.DataFrame(np.array(measurements_df).T, index=df_index, columns=['mean', 'std',
                                                                                            'timepoints'])
-        measurement_df.sortlevel(inplace=True)
-        return measurement_df
+        measurements_df.sortlevel(inplace=True)
+        return measurements_df
 
-    def _get_experiment_parameters(self, experiment):
+    def get_experiment_parameters(self, experiment):
         """
         Extracts the experiment-specific parameters from the project parameter vector
         """
@@ -307,7 +310,16 @@ class Project(object):
             except KeyError:
                 param_value = experiment.fixed_parameters[p_name]
                 # If it's not an optimized parameter, it must be fixed by experiment
-            exp_param_vector[p_model_idx] = param_value
+            try:
+                exp_param_vector[p_model_idx] = param_value
+            except ValueError:
+                print p_name
+                print self._project_param_vector
+                print param_value
+                print exp_param_vector
+                print p_model_idx
+                print 'hello__________________'
+                assert 0
         return exp_param_vector
 
     def _map_model_sim_to_measures(self, model_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
@@ -330,11 +342,6 @@ class Project(object):
             extra_residuals = len(mapped_sim)
             temp = np.array((mapped_sim, mapped_timepoints)).T
             self._simulations_df.values[res_idx:res_idx+extra_residuals, :] = temp
-
-            #self._simulations_df.ix[(experiment.name, measure_name)].values = temp
-            #self._simulations_df.loc[(measure_name, experiment.name), 'values'] = mapped_sim
-            #self._simulations_df.loc[(measure_name, experiment.name), 'timepoints'] = mapped_timepoints
-            extra_residuals = len(mapped_sim)
         return extra_residuals
 
     def _sim_experiments(self, exp_subset='all', use_experimental_timepoints=True):
@@ -349,7 +356,6 @@ class Project(object):
             raise ValueError('Parameter vector not set')
 
         simulated_experiments = []
-
         if exp_subset is 'all':
             simulated_experiments = self._experiments
         else:
@@ -358,7 +364,7 @@ class Project(object):
 
         residual_idx = 0
         for experiment in simulated_experiments:
-            experiment_parameters = self._get_experiment_parameters(experiment)
+            experiment_parameters = self.get_experiment_parameters(experiment)
             t_end = experiment.get_unique_timepoints()[-1]
             t_sim = np.linspace(0, t_end, 1000)
             model_sim = self._model.simulate(experiment_parameters, t_sim)
@@ -368,38 +374,43 @@ class Project(object):
     # Sensitivity Methods
     ##########################################################################################################
 
-    def _calc_model_jacobian(self):
-        all_jacobians = []
+    def _calc_model_jacobian(self, exp_subset='all', use_experimental_timepoints=True):
+        if self._project_param_vector is None:
+            raise ValueError('Parameter vector not set')
+
+        simulated_experiments = []
+        if exp_subset is 'all':
+            simulated_experiments = self._experiments
+        else:
+            for exp_idx in exp_subset:
+                simulated_experiments.append(self._experiments[exp_idx])
+
         n_vars = self._model.n_vars
-
-        for experiment in self._experiments:
-            if self._project_param_vector is None:
-                raise ValueError('Parameter vector not set')
-
-            experiment_parameters = self._get_experiment_parameters(experiment)
+        residual_idx = 0
+        for experiment in simulated_experiments:
+            experiment_parameters = self.get_experiment_parameters(experiment)
             t_end = experiment.get_unique_timepoints()[-1]
             t_sim = np.linspace(0, t_end, 1000)
             n_nonfixed_experiment_params = len(experiment.param_global_vector_idx)
             init_conditions = np.zeros((n_vars + n_nonfixed_experiment_params * n_vars,))
+            # TODO: Specify initial conditions
 
             model_jacobian = self._model.calc_jacobian(experiment_parameters, t_sim, init_conditions)
-            project_jacobian_dict = self._model_jacobian_to_project_jacobian(model_jacobian, t_sim, experiment)
-            all_jacobians.append(project_jacobian_dict)
+            residual_idx += self._map_model_jac_to_measures(model_jacobian, t_sim, experiment, residual_idx,
+                                                            use_experimental_timepoints)
 
-        self._model_jacobian = all_jacobians
-
-    def _model_jacobian_to_project_jacobian(self, jacobian_sim, t_sim, experiment):
+    def _map_model_jac_to_measures(self, jacobian_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
         """
-        Map the jacobian with respect to model parameters to the jacobian with respect to the global parameters
+        Map the jacobian with respect to model parameters to the jacobian with respect to the project parameters
         """
         m = self._model
 
         transformed_params_deriv = np.exp(self._project_param_vector)
+        # TODO: Abstract function transform
         # The project parameters are in log space, so:
         # f(g(x)) where g(x) is e^x - so d(f(g(x))/dx = df/dx(g(x))*dg/dx(x)
         # dg/dx = e^x
 
-        jacobian_dict = OrderedDict()
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
 
@@ -407,9 +418,10 @@ class Project(object):
             mapping_struct = self._measurement_to_model_map[measure_name]
             model_jac_to_measure_func = mapping_struct['model_jac_to_measure_jac_func']
             mapping_parameters = mapping_struct['parameters']
-            measure_jac = model_jac_to_measure_func(jacobian_sim, t_sim, experiment, measurement, mapping_parameters)
-
-            var_jacobian = np.zeros((measure_jac.shape[0], len(self._project_param_vector)))
+            measure_jac = model_jac_to_measure_func(jacobian_sim, t_sim, experiment, measurement, mapping_parameters,
+                                                    use_experimental_timepoints)
+            # Now - the model parameters are in a different index than the project parameters.
+            extra_residual = len(measure_jac)
 
             for p_model_idx, p_name in enumerate(m.param_order):
                 # p_model_idx is the index of the parameter in the model
@@ -423,33 +435,18 @@ class Project(object):
                     else:
                         continue
                         # We don't calculate the jacobian wrt fixed parameters.
-                var_jacobian[:, p_project_idx] += measure_jac[:, p_model_idx]
-            jacobian_dict[measurement.variable_name] = var_jacobian * transformed_params_deriv
 
-        return jacobian_dict
+                self._model_jacobian_df.values[res_idx:(res_idx + extra_residual), p_project_idx] += measure_jac[:,
+                                                                                                     p_model_idx] * \
+                                                                                                     transformed_params_deriv[
+                                                                                                         p_project_idx]
+                # Horrendous but it's faster to explicitly use the numerical indexes than fancy Pandas indexing
+
+        return extra_residual
 
     ##########################################################################################################
     # Scale Factor Methods
     ##########################################################################################################
-
-    def _update_scale_factors(self):
-        """
-        Analytically calculates the optimal scale factor for measurements that are in arbitrary units
-        """
-        for measure_name in self._scale_factors:
-
-
-                sf_iter = self.measure_iterator(measure_name)
-                self._scale_factors[measure_name].update_sf(sf_iter)
-
-    def _update_scale_factors_gradient(self):
-        """
-        Analytically calculates the jacobian of the scale factors for each measurement
-        """
-        for measure_name in self._scale_factors:
-            if self.use_scale_factors[measure_name]:
-                sf_iter = self.measure_iterator(measure_name)
-                self._scale_factors[measure_name].update_sf_gradient(sf_iter, self.n_project_params)
 
     def _calc_scale_factors_prior_jacobian(self):
         """
@@ -491,7 +488,7 @@ class Project(object):
                 #exp_inv = 1 / np.exp(log_p_value)
                 jac = np.zeros((self.n_project_params,))
                 jac[p_idx] = 1.0
-                parameter_prioqrs_jacobian.append(jac)
+                parameter_priors_jacobian.append(jac)
 
         return np.array(parameter_priors_jacobian)
 
@@ -526,7 +523,11 @@ class Project(object):
 
     @property
     def scale_factors(self):
-        return copy.deepcopy(self._scale_factors)
+        try:
+            sf_dict = self._loss_function.scale_factors
+            return sf_dict
+        except AttributeError:
+            raise AttributeError("%s type doesn't support scale factors" % type(self._loss_function))
 
     @property
     def experiments(self):
@@ -535,6 +536,31 @@ class Project(object):
     @property
     def project_param_vector(self):
         return np.copy(self._project_param_vector)
+
+    @property
+    def project_param_idx(self):
+        return copy.deepcopy(self._project_param_idx)
+
+    def get_simulations(self, scaled=False):
+        if self._simulations_df is None:
+            raise ValueError("No simulations executed yet")
+        else:
+            if scaled:
+                return self._loss_function.scale_sim_values(self._simulations_df)
+            else:
+                return self._simulations_df.copy()
+
+    @property
+    def measurements_df(self):
+        return self._measurements_df.copy()
+
+    @property
+    def model_jacobian_df(self):
+        return self._model_jacobian_df
+
+    ##########################################################################################################
+    # Stuff
+    ##########################################################################################################
 
     def add_experiment(self, experiment):
         """
@@ -599,17 +625,6 @@ class Project(object):
 
         return deleted_experiments
 
-    def measure_group_iterator(self, measure_name):
-        if type(measure_name) is str:
-            measure_group = [measure_name]
-
-        else:
-            measure_group = list(measure_name)
-            measure_group.sort()
-
-        for measure_name in measure_group:
-            yield measure_name
-
     def get_experiment(self, exp_idx):
         return copy.deepcopy(self._experiments[exp_idx])
 
@@ -622,7 +637,7 @@ class Project(object):
     def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
         if measure_name not in self._measurement_to_model_map:
             if measure_name not in self._scale_factors:
-            # Maybe it's a scale factor group
+                # Maybe it's a scale factor group
                 raise KeyError('%s not in project measures' % measure_name)
         if self.use_scale_factors[measure_name] is False:
             raise ValueError("Cannot set priors on a scale factor we are not calculating")
@@ -658,9 +673,8 @@ class Project(object):
             return self._project_param_idx[parameter_group][settings]
 
     def reset_calcs(self):
-        self._all_sims = []
-        self._all_residuals = None
-        self._model_jacobian = None
+        self._simulations_df.values[:] = 0
+        self._model_jacobian_df.values[:] = 0
         self._project_param_vector = np.zeros((self.n_project_params,))
 
     ##########################################################################################################
@@ -687,7 +701,7 @@ class Project(object):
         self._project_param_vector = np.copy(project_param_vector)
         self._sim_experiments()
 
-        return self._loss_function(self._simulations_df, self._measurement_df)
+        return self._loss_function.residuals(self._simulations_df, self._measurements_df)
 
         #measurement_residuals = np.zeros((self._n_residuals,))
         #res_idx = 0
@@ -744,27 +758,9 @@ class Project(object):
         self._project_param_vector = np.copy(project_param_vector)
 
         self._sim_experiments()
-        self._update_scale_factors()
-        self._calc_all_residuals()
-
         self._calc_model_jacobian()
-        self._update_scale_factors_gradient()
 
-        measurements_jacobian = np.zeros((self._n_residuals, len(project_param_vector)))
-        res_idx = 0
-        for exp_jac, exp_sim in zip(self._model_jacobian, self._all_sims):
-            for measure_name in exp_jac:
-                measure_sim = exp_sim[measure_name]['value']
-                measure_sim_jac = exp_jac[measure_name]
-                if self.use_scale_factors[measure_name]:
-                    sf = self._scale_factors[measure_name].sf
-                    sf_grad = self._scale_factors[measure_name].gradient
-                    jac = measure_sim_jac * sf + sf_grad.T * measure_sim[:, np.newaxis]
-                    # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
-                else:
-                    jac = measure_sim_jac
-                measurements_jacobian[res_idx:res_idx + len(measure_sim), :] = jac
-                res_idx += len(measure_sim)
+        return self._loss_function.jacobian(self._simulations_df, self._measurements_df, self._model_jacobian_df)
 
         project_jacobian = measurements_jacobian
         if self.use_parameter_priors and len(self._parameter_priors):
@@ -807,7 +803,7 @@ class Project(object):
         --------
         calc_project_jacobian
         """
-        residuals = self(project_param_vector)
+        residuals = self.residuals(project_param_vector)
         jacobian_matrix = self.calc_project_jacobian(project_param_vector)
         return (jacobian_matrix.T * residuals).sum(axis=1)
 
@@ -830,7 +826,7 @@ class Project(object):
         rss: : float
             The sum of all residuals
         """
-        residuals = self(project_param_vector)
+        residuals = self.residuals(project_param_vector)
         return 0.5*np.sum(residuals**2)
 
     def nlopt_fcn(self, project_param_vector, grad):
