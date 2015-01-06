@@ -59,12 +59,12 @@ class Project(object):
         self._model_parameter_settings = model_parameter_settings
         self._loss_function = SquareLossFunction(sf_groups)
 
+        self._parameter_priors = OrderedDict()
+        # Priors on Parameter
+
         # Take care of experiments now
         self._experiments = []  # A list of all the experiments in the project
         self.add_experiment(experiments)  # We use this to add the experiments to insure they are lex-sorted
-
-        self._parameter_priors = OrderedDict()
-        # Priors on Parameter
         ###############################################################################################################
 
         # Private variables that are modified depending on experiments in project
@@ -125,7 +125,7 @@ class Project(object):
         self._project_param_idx, self._n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
         # Convenience variables that depend on constructor arguments.
-        self._n_residuals = self._set_n_residuals()
+        self._n_residuals = self._update_n_residuals()
         self._measurements_df = self._measurements_as_dataframe()
 
         self._simulations_df = self._measurements_df.copy()
@@ -247,7 +247,7 @@ class Project(object):
             self._experiments[exp_idx].param_global_vector_idx = exp_param_idx
         return _project_param_idx, n_params, residuals_per_param
 
-    def _set_measurement_idx(self):
+    def _update_measurement_idx(self):
         """
         Lists all experiments that contain measurement of a particular variable
         """
@@ -262,7 +262,7 @@ class Project(object):
                     m_idx[measure_name].append(i)
         return m_idx
 
-    def _set_n_residuals(self, include_zero=False):
+    def _update_n_residuals(self, include_zero=False):
         """
         Calculates the total number of experimental points across all experiments
         """
@@ -281,6 +281,8 @@ class Project(object):
     def _measurements_as_dataframe(self):
         measurements_df = np.zeros((3, 0))
         df_index = []
+
+        # Measurements
         for experiment in self._experiments:
             for measurement in experiment.measurements:
                 vals = measurement.get_nonzero_measurements()
@@ -290,9 +292,17 @@ class Project(object):
                 for i in range(vals.shape[1]):
                     df_index.append((experiment.name, measurement.variable_name))
 
+        # Parameter Priors:
+        for p_group in self._parameter_priors:
+            for settings in p_group:
+                log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[p_group][settings]
+                vals = np.array(log_scale_parameter_prior, log_sigma_parameter, np.nan)
+                measurements_df = np.hstack((measurements_df, vals))
+                df_index.append(("Prior", p_group + ' ' + settings))
+
         df_index = pd.MultiIndex.from_tuples(df_index)
         measurements_df = pd.DataFrame(np.array(measurements_df).T, index=df_index, columns=['mean', 'std',
-                                                                                           'timepoints'])
+                                                                                             'timepoints'])
         measurements_df.sortlevel(inplace=True)
         return measurements_df
 
@@ -310,16 +320,7 @@ class Project(object):
             except KeyError:
                 param_value = experiment.fixed_parameters[p_name]
                 # If it's not an optimized parameter, it must be fixed by experiment
-            try:
-                exp_param_vector[p_model_idx] = param_value
-            except ValueError:
-                print p_name
-                print self._project_param_vector
-                print param_value
-                print exp_param_vector
-                print p_model_idx
-                print 'hello__________________'
-                assert 0
+            exp_param_vector[p_model_idx] = param_value
         return exp_param_vector
 
     def _map_model_sim_to_measures(self, model_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
@@ -370,34 +371,18 @@ class Project(object):
             model_sim = self._model.simulate(experiment_parameters, t_sim)
             residual_idx += self._map_model_sim_to_measures(model_sim, t_sim, experiment,
                                                             residual_idx, use_experimental_timepoints)
+
+        for p_group in self._parameter_priors:
+            for settings in self._parameter_priors[p_group]:
+                p_idx = self._project_param_idx[p_group][settings]
+                log_p_value = self._project_param_vector[p_idx]
+                self._simulations_df.values[residual_idx, 0] = log_p_value
+                residual_idx += 1
+
+
     ##########################################################################################################
     # Sensitivity Methods
     ##########################################################################################################
-
-    def _calc_model_jacobian(self, exp_subset='all', use_experimental_timepoints=True):
-        if self._project_param_vector is None:
-            raise ValueError('Parameter vector not set')
-
-        simulated_experiments = []
-        if exp_subset is 'all':
-            simulated_experiments = self._experiments
-        else:
-            for exp_idx in exp_subset:
-                simulated_experiments.append(self._experiments[exp_idx])
-
-        n_vars = self._model.n_vars
-        residual_idx = 0
-        for experiment in simulated_experiments:
-            experiment_parameters = self.get_experiment_parameters(experiment)
-            t_end = experiment.get_unique_timepoints()[-1]
-            t_sim = np.linspace(0, t_end, 1000)
-            n_nonfixed_experiment_params = len(experiment.param_global_vector_idx)
-            init_conditions = np.zeros((n_vars + n_nonfixed_experiment_params * n_vars,))
-            # TODO: Specify initial conditions
-
-            model_jacobian = self._model.calc_jacobian(experiment_parameters, t_sim, init_conditions)
-            residual_idx += self._map_model_jac_to_measures(model_jacobian, t_sim, experiment, residual_idx,
-                                                            use_experimental_timepoints)
 
     def _map_model_jac_to_measures(self, jacobian_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
         """
@@ -444,31 +429,37 @@ class Project(object):
 
         return extra_residual
 
-    ##########################################################################################################
-    # Scale Factor Methods
-    ##########################################################################################################
+    def _calc_model_jacobian(self, exp_subset='all', use_experimental_timepoints=True):
+        if self._project_param_vector is None:
+            raise ValueError('Parameter vector not set')
 
-    def _calc_scale_factors_prior_jacobian(self):
-        """
-        prior penalty is: ((log(B(theta)) - log_B_prior) / sigma_b_prior)**2
+        simulated_experiments = []
+        if exp_subset is 'all':
+            simulated_experiments = self._experiments
+        else:
+            for exp_idx in exp_subset:
+                simulated_experiments.append(self._experiments[exp_idx])
 
-        derive (log(B(theta)) = 1/B(theta) * dB/dtheta
-        dB/dtheta is the scale factor gradient
-        """
-        scale_factor_priors_jacobian = []
-        for measure_name in self._scale_factors:
-            grad = self._scale_factors[measure_name].calc_sf_prior_gradient()
-            if grad is not None:
-                scale_factor_priors_jacobian.append(grad)
-        return np.array(scale_factor_priors_jacobian)
+        n_vars = self._model.n_vars
+        residual_idx = 0
+        for experiment in simulated_experiments:
+            experiment_parameters = self.get_experiment_parameters(experiment)
+            t_end = experiment.get_unique_timepoints()[-1]
+            t_sim = np.linspace(0, t_end, 1000)
+            n_nonfixed_experiment_params = len(experiment.param_global_vector_idx)
+            init_conditions = np.zeros((n_vars + n_nonfixed_experiment_params * n_vars,))
+            # TODO: Specify initial conditions
 
-    def _calc_scale_factors_prior_residuals(self):
-        sf_residuals = []
-        for measure_name in self._scale_factors:
-            res = self._scale_factors[measure_name].calc_sf_prior_residual()
-            if res is not None:
-                sf_residuals.append(res)
-        return np.array(sf_residuals)
+            model_jacobian = self._model.calc_jacobian(experiment_parameters, t_sim, init_conditions)
+            residual_idx += self._map_model_jac_to_measures(model_jacobian, t_sim, experiment, residual_idx,
+                                                            use_experimental_timepoints)
+
+        # In practice - we don't have to update this, ever.  Can optimize it out?
+        for p_group in self._parameter_priors:
+            for settings in self._parameter_priors[p_group]:
+                p_idx = self._project_param_idx[p_group][settings]
+                self._model_jacobian_df.values[residual_idx, p_idx] = 1
+                residual_idx += 1
 
     ##########################################################################################################
     # Parameter Priors
@@ -499,11 +490,11 @@ class Project(object):
         """
         parameter_prior_residuals = []
 
-        for parameter_group in self._parameter_priors:
-            for setting in self._parameter_priors[parameter_group]:
-                p_idx = self._project_param_idx[parameter_group][setting]
+        for p_group in self._parameter_priors:
+            for settings in self._parameter_priors[p_group]:
+                p_idx = self._project_param_idx[p_group][settings]
                 log_p_value = self._project_param_vector[p_idx]
-                log_parameter_prior, log_sigma_parameter = self._parameter_priors[parameter_group][setting]
+                log_parameter_prior, log_sigma_parameter = self._parameter_priors[p_group][settings]
                 res = (log_p_value - log_parameter_prior) / log_sigma_parameter
                 parameter_prior_residuals.append(res)
 
@@ -541,14 +532,17 @@ class Project(object):
     def project_param_idx(self):
         return copy.deepcopy(self._project_param_idx)
 
-    def get_simulations(self, scaled=False):
+    def get_simulations(self, scaled=False, include_priors=False):
         if self._simulations_df is None:
             raise ValueError("No simulations executed yet")
         else:
             if scaled:
-                return self._loss_function.scale_sim_values(self._simulations_df)
+                out = self._loss_function.scale_sim_values(self._simulations_df)
             else:
-                return self._simulations_df.copy()
+                out = self._simulations_df.copy()
+
+        if not include_priors:
+            return out.drop("Priors", level=0)
 
     @property
     def measurements_df(self):
@@ -635,33 +629,18 @@ class Project(object):
         raise KeyError('%s not in experiments')
 
     def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
-        if measure_name not in self._measurement_to_model_map:
-            if measure_name not in self._scale_factors:
-                # Maybe it's a scale factor group
-                raise KeyError('%s not in project measures' % measure_name)
-        if self.use_scale_factors[measure_name] is False:
-            raise ValueError("Cannot set priors on a scale factor we are not calculating")
+        self._loss_function.set_scale_factor_priors(measure_name, log_scale_factor_prior, log_sigma_scale_factor)
 
-        self._scale_factors[measure_name].log_prior = log_scale_factor_prior
-        self._scale_factors[measure_name].log_prior_sigma = log_sigma_scale_factor
-
-    def get_scale_factor_priors(self):
-        sf_priors = {}
-        for measure_name in self._scale_factors:
-            sf_priors[measure_name] = (self._scale_factors[measure_name].log_prior,
-                                       self._scale_factors[measure_name].log_prior_sigma)
-        return sf_priors
-
-    def set_parameter_log_prior(self, parameter, parameter_setting, log_scale_parameter_prior, log_sigma_parameter):
+    def set_parameter_log_prior(self, p_group, settings, log_scale_parameter_prior, log_sigma_parameter):
         try:
-            self._project_param_idx[parameter][parameter_setting]
+            self._project_param_idx[p_group][settings]
         except KeyError:
-            raise KeyError('%s with settings %s not in the project parameters' % (parameter, parameter_setting))
-        if parameter not in self._parameter_priors:
-            self._parameter_priors[parameter] = OrderedDict()
+            raise KeyError('%s with settings %s not in the project parameters' % (p_group, settings))
+        if p_group not in self._parameter_priors:
+            self._parameter_priors[p_group] = OrderedDict()
             """This is an OrderedDict within an OrderedDict.  Iteration order is guaranteed to be stable"""
 
-        self._parameter_priors[parameter][parameter_setting] = (log_scale_parameter_prior, log_sigma_parameter)
+        self._parameter_priors[p_group][settings] = (log_scale_parameter_prior, log_sigma_parameter)
 
     def get_parameter_priors(self):
         return copy.deepcopy(self._parameter_priors)

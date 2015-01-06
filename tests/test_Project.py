@@ -379,9 +379,10 @@ class TestProject(TestCase):
         sf_groups = [frozenset(['Substrate', 'Product'])]
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
 
-        # proj.use_parameter_priors = True
-        # proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
-        # proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
+        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
+        proj.set_parameter_log_prior('k_deg_s', 'Global', np.log(0.01), 0.5)
+        proj.set_parameter_log_prior('k_deg_p', 'Global', np.log(0.01), 0.5)
+        proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
         # Strong prior around 1
 
         # NLopt Optimization
@@ -418,14 +419,6 @@ class TestProject(TestCase):
         ax.set_title("Fitting Product and Substrate")
         plt.show()
 
-        # print sub_sim
-        # print residuals
-        print "_____________________________________"
         out = proj.calc_sum_square_residuals(nlopt_params)
         res = proj.residuals(nlopt_params)
         rss = 1 / 2.0 * np.sum(res ** 2)
-        print out
-        print rss
-        print np.exp(nlopt_params)
-        print "_____________________________________"
-        assert 0

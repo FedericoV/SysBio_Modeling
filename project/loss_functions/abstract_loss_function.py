@@ -35,6 +35,13 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
     def scale_factors(self):
         return deepcopy(self._scale_factors)
 
+    def set_scale_factor_priors(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
+        try:
+            self._scale_factors[measure_name].log_prior = log_scale_factor_prior
+            self._scale_factors[measure_name].log_prior_sigma = log_sigma_scale_factor
+        except KeyError:
+            raise KeyError("%s not present as a scale factor" % measure_name)
+
 
 class DifferentiableLossFunctionABC(LossFunctionABC):
     __metaclass__ = ABCMeta

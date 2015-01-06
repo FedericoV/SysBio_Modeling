@@ -1,6 +1,7 @@
 __author__ = 'Federico Vaggi'
 
 import numpy as np
+import pandas as pd
 
 from ..abstract_loss_function import LossFunctionWithScaleFactors, DifferentiableLossFunctionABC
 from .linear_scale_factor import LinearScaleFactor
@@ -31,7 +32,21 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
             self.update_scale_factors(simulations, experiment_measures)
             simulations = self.scale_sim_values(simulations)
 
-        return (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
+        res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
+
+        all_sf_res = []
+        sf_res_idx = []
+        for measure, sf in self._scale_factors.items():
+            sf_res = sf.calc_sf_prior_residual()
+            if sf_res is not None:
+                all_sf_res.append(sf_res)
+                sf_res_idx.append(("Prior", measure))
+
+        if len(all_sf_res) > 0:
+            all_sf_res = pd.Series(all_sf_res, index=pd.MultiIndex.from_tuples(sf_res_idx))
+            res = res.append(all_sf_res)
+
+        return res
 
     def jacobian(self, simulations, experiment_measures, simulations_jacobian):
 
@@ -61,6 +76,11 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
                 measure_scaled_jac = measure_jac * sf + measure_sim[:, np.newaxis] * sf_grad
                 # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 scaled_jacobian.ix[(slice(None), measure), :] = measure_scaled_jac  # TODO: Very slow
+
+        for measure, sf in self._scale_factors.items():
+            sf_jac = sf.calc_sf_prior_gradient()
+            if sf_jac is not None:
+                scaled_jacobian.ix[("Prior", measure), :] = sf_jac
 
         return scaled_jacobian
 
@@ -131,4 +151,3 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
                 group_exp_measures = np.hstack(group_exp_measures)
                 self._scale_factors[measure_group].update_sf_gradient(group_sims, group_exp_measures[:, 0],
                                                                       group_exp_measures[:, 1], group_jacs)
-
