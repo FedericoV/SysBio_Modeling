@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..measurement import TimecourseMeasurement
+from measurement import TimecourseMeasurement
 
 
 class Experiment(object):
