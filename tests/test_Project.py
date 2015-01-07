@@ -379,10 +379,10 @@ class TestProject(TestCase):
         sf_groups = [frozenset(['Substrate', 'Product'])]
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
 
-        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
-        proj.set_parameter_log_prior('k_deg_s', 'Global', np.log(0.01), 0.5)
-        proj.set_parameter_log_prior('k_deg_p', 'Global', np.log(0.01), 0.5)
-        proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
+        #proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
+        #proj.set_parameter_log_prior('k_deg_s', 'Global', np.log(0.01), 0.5)
+        #proj.set_parameter_log_prior('k_deg_p', 'Global', np.log(0.01), 0.5)
+        #proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
         # Strong prior around 1
 
         # NLopt Optimization
