@@ -131,8 +131,8 @@ class Experiment(object):
         else:
             for existing_measurement in self._measurements:
                 if measurement.variable_name == existing_measurement.variable_name:
-                    if (type(existing_measurement) and type(measurement)) is TimecourseMeasurement:
-                        raise KeyError('%s already has timeseries data associated with this experiment' % self.name)
+                    #if (type(existing_measurement) and type(measurement)) is TimecourseMeasurement:
                     # Two steady state measurements are OK provided they are wrt different parameters.
+                    raise KeyError('%s already has timeseries data associated with this experiment' % self.name)
             self._measurements.append(measurement)
         self._measurements.sort(key=lambda x: x.variable_name)

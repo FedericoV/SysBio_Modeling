@@ -134,8 +134,9 @@ class Project(object):
 
         jac_cols = self.get_ordered_project_params()
         jac_idx = self._simulations_df.index
-        self._model_jacobian_df = pd.DataFrame(np.zeros((self._n_residuals, self._n_project_params)), index=jac_idx,
-                                               columns=jac_cols)
+
+        self._model_jacobian_df = pd.DataFrame(np.zeros((len(self._simulations_df), self._n_project_params)),
+                                               index=jac_idx, columns=jac_cols)
         # We also have to account for scale factor priors and parameter priors
 
     def _set_local_param_idx(self):
@@ -294,11 +295,12 @@ class Project(object):
 
         # Parameter Priors:
         for p_group in self._parameter_priors:
-            for settings in p_group:
+            for settings in self._parameter_priors[p_group]:
                 log_scale_parameter_prior, log_sigma_parameter = self._parameter_priors[p_group][settings]
-                vals = np.array(log_scale_parameter_prior, log_sigma_parameter, np.nan)
-                measurements_df = np.hstack((measurements_df, vals))
-                df_index.append(("Prior", p_group + ' ' + settings))
+                vals = np.array([log_scale_parameter_prior, log_sigma_parameter, np.nan])
+                measurements_df = np.hstack((measurements_df, vals[:, np.newaxis]))
+                _idx_name = p_group + ' ' + ''.join([str(setting) for setting in settings])
+                df_index.append(("Prior", _idx_name))
 
         df_index = pd.MultiIndex.from_tuples(df_index)
         measurements_df = pd.DataFrame(np.array(measurements_df).T, index=df_index, columns=['mean', 'std',
@@ -391,6 +393,7 @@ class Project(object):
         m = self._model
 
         transformed_params_deriv = np.exp(self._project_param_vector)
+        extra_residual = 0
         # TODO: Abstract function transform
         # The project parameters are in log space, so:
         # f(g(x)) where g(x) is e^x - so d(f(g(x))/dx = df/dx(g(x))*dg/dx(x)
@@ -641,6 +644,7 @@ class Project(object):
             """This is an OrderedDict within an OrderedDict.  Iteration order is guaranteed to be stable"""
 
         self._parameter_priors[p_group][settings] = (log_scale_parameter_prior, log_sigma_parameter)
+        self._update_project_settings()
 
     def get_parameter_priors(self):
         return copy.deepcopy(self._parameter_priors)
@@ -682,24 +686,6 @@ class Project(object):
 
         return self._loss_function.residuals(self._simulations_df, self._measurements_df)
 
-        #measurement_residuals = np.zeros((self._n_residuals,))
-        #res_idx = 0
-        #for exp_res in self._all_residuals:
-        #    for res_block in exp_res.values():
-        #        measurement_residuals[res_idx:res_idx + len(res_block)] = res_block
-        #        res_idx += len(res_block)
-
-        #project_residuals = measurement_residuals
-        #if self.use_parameter_priors and len(self._parameter_priors):
-        #    parameter_priors_residuals = self._calc_parameters_prior_residuals()
-        #    project_residuals = np.hstack((project_residuals, parameter_priors_residuals))
-
-        #if self.use_scale_factors_priors and len(self.scale_factors):
-        #    scale_factor_priors_residuals = self._calc_scale_factors_prior_residuals()
-        #    project_residuals = np.hstack((project_residuals, scale_factor_priors_residuals.ravel()))
-
-        #return project_residuals
-
     def calc_project_jacobian(self, project_param_vector):
         """
         Given a cost function:
@@ -740,17 +726,6 @@ class Project(object):
         self._calc_model_jacobian()
 
         return self._loss_function.jacobian(self._simulations_df, self._measurements_df, self._model_jacobian_df)
-
-        project_jacobian = measurements_jacobian
-        if self.use_parameter_priors and len(self._parameter_priors):
-            parameter_priors_jacobian = self._calc_parameters_prior_jacobian()
-            project_jacobian = np.vstack((project_jacobian, parameter_priors_jacobian))
-
-        if self.use_scale_factors_priors and len(self.scale_factors):
-            sf_priors_jacobian = self._calc_scale_factors_prior_jacobian()
-            project_jacobian = np.vstack((project_jacobian, sf_priors_jacobian))
-
-        return project_jacobian
 
     def calc_rss_gradient(self, project_param_vector, *args):
         """
