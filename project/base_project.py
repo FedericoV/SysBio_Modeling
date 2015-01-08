@@ -300,7 +300,9 @@ class Project(object):
                 vals = np.array([log_scale_parameter_prior, log_sigma_parameter, np.nan])
                 measurements_df = np.hstack((measurements_df, vals[:, np.newaxis]))
                 _idx_name = p_group + ' ' + ''.join([str(setting) for setting in settings])
-                df_index.append(("Prior", _idx_name))
+                df_index.append(("~Prior", _idx_name))
+                # The ~ in front of prior is to insure it comes after the experiments when lexsorting.
+                # Unfortunate we have to do this...  would be much easier if Pandas indexing were faster.
 
         df_index = pd.MultiIndex.from_tuples(df_index)
         measurements_df = pd.DataFrame(np.array(measurements_df).T, index=df_index, columns=['mean', 'std',
@@ -331,6 +333,7 @@ class Project(object):
         map cleanly to a single measurement.
         """
         measure_sim_dict = OrderedDict()
+        total_experiment_residuals = 0
 
         for measurement in experiment.measurements:
             measure_name = measurement.variable_name
@@ -345,7 +348,9 @@ class Project(object):
             extra_residuals = len(mapped_sim)
             temp = np.array((mapped_sim, mapped_timepoints)).T
             self._simulations_df.values[res_idx:res_idx+extra_residuals, :] = temp
-        return extra_residuals
+            res_idx += extra_residuals
+            total_experiment_residuals += extra_residuals
+        return total_experiment_residuals
 
     def _sim_experiments(self, exp_subset='all', use_experimental_timepoints=True):
         """
@@ -380,8 +385,6 @@ class Project(object):
                 log_p_value = self._project_param_vector[p_idx]
                 self._simulations_df.values[residual_idx, 0] = log_p_value
                 residual_idx += 1
-
-
     ##########################################################################################################
     # Sensitivity Methods
     ##########################################################################################################
@@ -508,6 +511,10 @@ class Project(object):
     ##########################################################################################################
 
     @property
+    def project_param_idx(self):
+        return copy.deepcopy(self._project_param_idx)
+
+    @property
     def n_project_params(self):
         return self._n_project_params
 
@@ -545,7 +552,9 @@ class Project(object):
                 out = self._simulations_df.copy()
 
         if not include_priors:
-            return out.drop("Priors", level=0)
+            out.drop("~Prior", level=0, axis=0, inplace=True)
+
+        return out
 
     @property
     def measurements_df(self):
@@ -1020,20 +1029,3 @@ class Project(object):
                 project_params.append((global_p_name, global_idx))
         project_params.sort(key=lambda x: x[1])
         return zip(*project_params)[0]
-
-
-    def print_project_report(self):
-        """" Prints all project settings"""
-        # TODO: Make a pandas DataFrame for nice formatting of parameter priors/settings/values, etc
-
-        # First, experiments:
-        print "Experiments In Project:"
-        for e in self._experiments:
-            print e.name
-
-        print "________________________\n\n"
-        print "Parameters in Project:"
-        self.print_param_settings()
-
-        print "________________________\n\n"
-        print "Priors on Parameters:"

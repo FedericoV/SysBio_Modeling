@@ -34,6 +34,7 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
 
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
+        """
         all_sf_res = []
         sf_res_idx = []
         for measure, sf in self._scale_factors.items():
@@ -45,6 +46,7 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
         if len(all_sf_res) > 0:
             all_sf_res = pd.Series(all_sf_res, index=pd.MultiIndex.from_tuples(sf_res_idx))
             res = res.append(all_sf_res)
+        """
 
         return res
 

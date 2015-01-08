@@ -32,7 +32,11 @@ class Experiment(object):
     def __init__(self, name, measurements, fixed_parameters=None,
                  experiment_settings=None):
 
-        self.name = name
+        if name[0].isalpha():
+            self.name = name
+        else:
+            raise ValueError("Experiment names must start with a letter")
+
         self.fixed_parameters = fixed_parameters
         self.settings = {}
         self.initial_conditions = {}

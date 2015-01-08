@@ -222,10 +222,7 @@ class TestProject(TestCase):
         # Set Up
         #############################################################################################
         proj = TestProject.proj
-
-        exp_timepoints = np.array([0., 11.11111111, 22.22222222, 33.33333333,
-                                   44.44444444, 55.55555556, 66.66666667, 77.77777778,
-                                   88.88888889, 100.])
+        exp_timepoints = np.linspace(0, 100, 10)
         exp_measures = np.array([0.74524402, 1.53583955, 2.52502335, 3.92107899, 4.58210253,
                                  5.45036258, 7.03185055, 7.75907324, 9.30805318, 9.751119])
         simple_measure = TimecourseMeasurement('Variable_1', np.log(exp_measures), exp_timepoints)
@@ -251,11 +248,16 @@ class TestProject(TestCase):
             if experiment.name == 'Simple_Experiment':
                 present = 1
 
-        n_experiments = len(list(proj.experiments))
         if present == 1:
             raise AssertionError('Unable to remove experiment from project')
 
     def test_experiment_settings(self):
+        raise AssertionError('Not Implemented Yet')
+
+    def test_experiment_order(self):
+        raise AssertionError('Not Implemented Yet')
+
+    def test_priors_after_experiments(self):
         raise AssertionError('Not Implemented Yet')
 
     def test_sum_variables(self):
@@ -379,9 +381,9 @@ class TestProject(TestCase):
         sf_groups = [frozenset(['Substrate', 'Product'])]
         proj = Project(mm_model, [substrate_experiment], {}, measurement_to_model_map, sf_groups=sf_groups)
 
-        #proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
-        #proj.set_parameter_log_prior('k_deg_s', 'Global', np.log(0.01), 0.5)
-        #proj.set_parameter_log_prior('k_deg_p', 'Global', np.log(0.01), 0.5)
+        proj.set_parameter_log_prior('k_synt_s', 'Global', np.log(0.01), 0.5)
+        proj.set_parameter_log_prior('k_deg_s', 'Global', np.log(0.01), 0.5)
+        proj.set_parameter_log_prior('k_deg_p', 'Global', np.log(0.01), 0.5)
         #proj.set_scale_factor_log_prior(frozenset(['Substrate', 'Product']), np.log(1.0), 0.1)
         # Strong prior around 1
 
@@ -393,7 +395,7 @@ class TestProject(TestCase):
         opt.set_upper_bounds(high_bounds)
         opt.set_lower_bounds(low_bounds)
         opt.set_min_objective(proj.nlopt_fcn)
-        opt.set_maxtime(10)
+        opt.set_maxtime(5)
         nlopt_params = opt.optimize(random_params)
 
         # Getting simulated values out.
@@ -412,11 +414,12 @@ class TestProject(TestCase):
         # They are the same scale factor
 
         ax = fig.add_subplot(122)
-        ax.plot(sub_t, sub_sim, 'r-')
+        ax.plot(sub_t, sub_sim, 'r-', label='substrate')
         ax.plot(t_sim, sim[:, 0], 'ro')
-        ax.plot(prod_t, prod_sim, 'b-')
+        ax.plot(prod_t, prod_sim, 'b-', label='product')
         ax.plot(t_sim, sim[:, 1], 'bo')
         ax.set_title("Fitting Product and Substrate")
+        ax.legend(loc='best')
         plt.show()
 
         out = proj.calc_sum_square_residuals(nlopt_params)
