@@ -7,8 +7,6 @@ import numba
 from ..abstract_scale_factor import ScaleFactorABC
 
 
-
-
 ########################################################################################
 # Utility Functions
 ########################################################################################
@@ -18,17 +16,6 @@ def _entropy_integrand(u, ak, bk, prior_B, sigma_log_B, T, B_best, log_B_best):
     B_centered = np.exp(u) * B_best
     lB = u + log_B_best
     return np.exp(-ak / (2 * T) * (B_centered - B_best) ** 2 - (lB - prior_B) ** 2 / (2 * sigma_log_B ** 2))
-
-def _accumulate_scale_factors_jac(exp_data, exp_std, sim_data, model_sens,
-                                  sim_dot_exp, sim_dot_sim, sens_dot_exp_data, sens_dot_sim):
-    sens_dot_exp_data[:] += np.sum(model_sens.T*exp_data / (exp_std**2), axis=1)   # Vector
-    sens_dot_sim[:] += np.sum(model_sens.T*sim_data / (exp_std**2), axis=1)   # Vector
-    sim_dot_sim[:] += np.sum((sim_data * sim_data) / (exp_std**2))   # Scalar
-    sim_dot_exp[:] += np.sum((sim_data * exp_data) / (exp_std**2))   # Scalar
-
-
-def _combine_scale_factors(sens_dot_exp_data, sens_dot_sim, sim_dot_sim, sim_dot_exp, scale_jac_out):
-    scale_jac_out[:] = (sens_dot_exp_data/sim_dot_sim - 2*sim_dot_exp*sens_dot_sim/sim_dot_sim**2)
 
 
 class LinearScaleFactor(ScaleFactorABC):
@@ -73,20 +60,15 @@ class LinearScaleFactor(ScaleFactorABC):
             return None
         return (np.log(self._sf) - self.log_prior) / self.log_prior_sigma
 
-    def calc_scale_factor_entropy(self, measure_iterator, temperature=1.0):
+    def calc_scale_factor_entropy(self, sim_data, exp_data, exp_std, temperature=1.0):
         """
         Implementation taken from SloppyCell.  All credit to Sethna group, all mistakes are mine
         """
         if self._sf is None:
             return 0
 
-        sim_dot_exp = np.zeros((1,), dtype='float64')
-        sim_dot_sim = np.zeros((1,), dtype='float64')
-
-        for (measurement, sim, model_sens) in measure_iterator:
-            exp_data, exp_std, exp_timepoints = measurement.get_nonzero_measurements()
-            sim_data = sim['value']
-            _accumulate_scale_factors(exp_data, exp_std, sim_data, sim_dot_exp, sim_dot_sim)
+        sim_dot_exp = np.sum((sim_data * exp_data) / (exp_std ** 2))
+        sim_dot_sim = np.sum((sim_data * sim_data) / (exp_std ** 2))
 
         self._sf = sim_dot_exp / sim_dot_sim
         log_sf = np.log(self._sf)
