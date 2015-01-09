@@ -1,6 +1,7 @@
 __author__ = 'Federico Vaggi'
 from abc import ABCMeta
 from copy import deepcopy
+import numpy as np
 
 from ..utils import OrderedHashDict
 
@@ -41,6 +42,48 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
             self._scale_factors[measure_name].log_prior_sigma = log_sigma_scale_factor
         except KeyError:
             raise KeyError("%s not present as a scale factor" % measure_name)
+
+    def scale_sim_values(self, simulations):
+        scaled_sim_values = simulations.copy()
+        for measure_group in self._scale_factors:
+            if type(measure_group) is str:
+                _measure_group = [measure_group]
+            else:
+                _measure_group = measure_group
+                # Hack to work around scale factor groups
+                # TODO: Refactor OrderedHashDict
+
+            for measure in _measure_group:
+                sf = self._scale_factors[measure].sf
+                scaled_sim_values.loc[(slice(None), measure), 'mean'] *= sf  # TODO: Very slow.
+        return scaled_sim_values
+
+    def update_scale_factors(self, simulations, experiment_measures):
+        # Note - relies on carefully sorted dataframes!!
+        for measure_group in self._scale_factors:
+            if type(measure_group) is str:
+                _measure_group = [measure_group]
+            else:
+                _measure_group = measure_group
+                # Hack to work around scale factor groups
+                # TODO: Refactor OrderedHashDict
+
+            # Multiple measures can share the same scale factor
+            group_sims = []
+            group_exp_measures = []
+            for measure in _measure_group:
+                group_sims.append(simulations.loc[(slice(None), measure), :].values[:, 0])  # Values
+                group_exp_measures.append(experiment_measures.loc[(slice(None), measure), :].values[:, :2])
+                # Here we get values and std
+                # Probably slow indexing here.  Have to parse it carefully.
+
+            group_sims = np.hstack(group_sims)
+            group_exp_measures = np.vstack(group_exp_measures)
+
+            assert len(group_sims) == len(group_exp_measures)
+
+            self._scale_factors[measure_group].update_sf(group_sims, group_exp_measures[:, 0],
+                                                         group_exp_measures[:, 1])
 
 
 class DifferentiableLossFunctionABC(LossFunctionABC):
