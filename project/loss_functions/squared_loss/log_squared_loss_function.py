@@ -2,7 +2,7 @@ __author__ = 'Federico Vaggi'
 
 import numpy as np
 
-from .squared_loss import SquareLossFunction
+from .squared_loss_function import SquareLossFunction
 from .log_scale_factor import LogScaleFactor
 
 
