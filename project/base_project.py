@@ -7,6 +7,7 @@ import pandas as pd
 
 from . import utils
 from loss_functions.squared_loss import SquareLossFunction
+from loss_functions.abstract_loss_function import LossFunctionWithScaleFactors
 
 
 class Project(object):
@@ -30,7 +31,7 @@ class Project(object):
     """
 
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map,
-                 sf_groups=None):
+                 sf_groups=None, loss_function=SquareLossFunction):
         """
 
 
@@ -44,20 +45,32 @@ class Project(object):
         :type model_parameter_settings: OrderedDict
         :param measurement_to_model_map: A struct that contains the necessary information to map the output of the model
         to the measurements of the model
-        # TODO: Refactor as a class.
         :type measurement_to_model_map: dict
         :param sf_groups: Which measurements share scale factors
         :type sf_groups: list[set]
-        :return:
+        :param loss_function: A function to measure the distance between the simulated values and the measured values
+        :type loss_function: function
+        :return: New Project
         :rtype: None
         """
+
+        # TODO: Refactor model_parameter_settings a class.
         self.project_description = ""
 
         # Private variables that shouldn't be carelessly modified
         ###############################################################################################################
         self._model = model
         self._model_parameter_settings = model_parameter_settings
-        self._loss_function = SquareLossFunction(sf_groups)
+
+        # Checking that only a loss function that supports scale factors is initiated with sf
+        if hasattr(loss_function, 'scale_factors'):
+            self._loss_function = loss_function(sf_groups)
+
+        elif sf_groups is not None:
+            raise ValueError("Loss Function %s does not support scale factors" % type(loss_function))
+
+        else:
+            self._loss_function = loss_function
 
         self._parameter_priors = OrderedDict()
         # Priors on Parameter
