@@ -81,7 +81,6 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
             group_exp_measures = np.vstack(group_exp_measures)
 
             assert len(group_sims) == len(group_exp_measures)
-
             self._scale_factors[measure_group].update_sf(group_sims, group_exp_measures[:, 0],
                                                          group_exp_measures[:, 1])
 
@@ -97,5 +96,3 @@ class DifferentiableLossFunctionABC(LossFunctionABC):
 
     def jacobian(self, sim_values, exp_values, exp_std):
         pass
-
-

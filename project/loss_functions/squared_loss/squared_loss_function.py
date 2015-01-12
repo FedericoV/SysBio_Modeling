@@ -1,15 +1,13 @@
 __author__ = 'Federico Vaggi'
 
 import numpy as np
-import pandas as pd
 
 from ..abstract_loss_function import LossFunctionWithScaleFactors, DifferentiableLossFunctionABC
 from .linear_scale_factor import LinearScaleFactor
 
 
 class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctionABC):
-
-    def __init__(self, sf_groups=None):
+    def __init__(self, sf_groups=None, sf_type=LinearScaleFactor):
         """
         Default Square Loss Function:
 
@@ -20,7 +18,7 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
 
         X_i is a v
         """
-        super(SquareLossFunction, self).__init__(sf_groups, LinearScaleFactor)
+        super(SquareLossFunction, self).__init__(sf_groups, sf_type)
 
     def evaluate(self, simulations, experiment_measures):
         res_array = self.residuals(simulations, experiment_measures)
