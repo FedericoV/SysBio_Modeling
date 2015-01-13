@@ -30,5 +30,13 @@ class ScaleFactorABC(object):
     def calc_sf_prior_gradient(self):
         return
 
+    def __repr__(self):
+        output = "SF value: %.5e\n" % self._sf
+
+        if self.log_prior is not None:
+            output += "SF log prior: %.4f\n" % self.log_prior
+            output += "SF log prior sigma: %.4f\n" % self.log_prior_sigma
+
+        return output
 
 

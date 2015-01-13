@@ -11,18 +11,29 @@ class LogScaleFactor(ScaleFactorABC):
     def __init__(self, log_prior=None, log_prior_sigma=None):
         super(LogScaleFactor, self).__init__(log_prior, log_prior_sigma)
         self._sf = 0
+        self._log_data_sum = None
+        self._inv_std_sum = None
 
     def update_sf(self, sim_data, exp_data, exp_std):
-        self._sf = np.sum(np.log(sim_data) - np.log(exp_data) / (exp_std ** 2))
+        if self._inv_std_sum is None:
+            self._inv_std_sum = np.sum((1.0 / exp_std**2))
+            self._log_data_sum = np.exp(np.sum((np.log(exp_data) / (exp_std**2))) / self._inv_std_sum)
+            # We can split the summation to cache the terms that depend on measurements only
+
+        log_sim_sum = np.exp(-np.sum((np.log(sim_data) / (exp_std**2))) / self._inv_std_sum)
+
+        # Cached version - only have to recalculate this.
+
+        self._sf = self._log_data_sum * log_sim_sum
 
     def update_sf_gradient(self, sim_data, exp_data, exp_std, sim_jac):
         """
         Analytically calculates the gradient of the scale factors for each measurement
         """
         # TODO: TEST
-
-        jac_div_sim = np.sum(sim_jac.T / (sim_data * exp_std ** 2), axis=1)
-        self._sf_gradient = self._sf * jac_div_sim
+        sim_std_prod = (sim_data * exp_std**2)
+        exp_grad = (-1.0/self._inv_std_sum) * np.sum((sim_jac.T / sim_std_prod), axis=1)
+        self._sf_gradient = self._sf * exp_grad
 
     def calc_sf_prior_gradient(self):
         """
@@ -69,12 +80,3 @@ class LogScaleFactor(ScaleFactorABC):
     @property
     def gradient(self):
         return self._sf_gradient.copy()
-
-    def __repr__(self):
-        output = "SF value: %.4f\n" % self._sf
-
-        if self.log_prior is not None:
-            output += "SF log prior: %.4f\n" % self.log_prior
-            output += "SF log prior sigma: %.4f\n" % self.log_prior_sigma
-
-        return output

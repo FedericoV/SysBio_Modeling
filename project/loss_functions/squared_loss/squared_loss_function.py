@@ -32,19 +32,11 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
 
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
-        """
-        all_sf_res = []
-        sf_res_idx = []
+        # Now we add the scale factor priors in here.
         for measure, sf in self._scale_factors.items():
             sf_res = sf.calc_sf_prior_residual()
             if sf_res is not None:
-                all_sf_res.append(sf_res)
-                sf_res_idx.append(("Prior", measure))
-
-        if len(all_sf_res) > 0:
-            all_sf_res = pd.Series(all_sf_res, index=pd.MultiIndex.from_tuples(sf_res_idx))
-            res = res.append(all_sf_res)
-        """
+                res.loc[("~Prior", "%s_SF" % measure)] = sf_res
 
         return res
 
@@ -80,7 +72,7 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
         for measure, sf in self._scale_factors.items():
             sf_jac = sf.calc_sf_prior_gradient()
             if sf_jac is not None:
-                scaled_jacobian.ix[("Prior", measure), :] = sf_jac
+                scaled_jacobian.ix[("~Prior", "%s_SF" % measure), :] = sf_jac
 
         return scaled_jacobian
 

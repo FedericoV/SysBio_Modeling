@@ -86,12 +86,3 @@ class LinearScaleFactor(ScaleFactorABC):
     @property
     def gradient(self):
         return self._sf_gradient.copy()
-
-    def __repr__(self):
-        output = "SF value: %.4f\n" % self._sf
-
-        if self.log_prior is not None:
-            output += "SF log prior: %.4f\n" % self.log_prior
-            output += "SF log prior sigma: %.4f\n" % self.log_prior_sigma
-
-        return output
