@@ -192,6 +192,30 @@ class TestLossFunction(TestCase):
         log_sf_residuals = log_lf.residuals(sim, measures)
         assert np.allclose(log_sf_residuals, np.zeros_like(log_sf_residuals))
 
+    def test_scale_factor_priors(self):
+        lf = SquareLossFunction(sf_groups=['Lin', 'Square'])
+
+        # Testing Residuals
+        sim = TestLossFunction.sim.copy()
+        sim = sim[sim['mean'] != 0]
+        # Removing zero values.  Those are a headache with logs.
+
+        measures = sim.copy()
+        measures.insert(1, 'std', np.ones_like(measures['mean']))
+        measures['mean'] *= 5
+
+        lf.set_scale_factor_priors('Square', 1.0, 2.0)
+
+        assert (lf.scale_factors['Square'].log_prior == 1.0)
+        assert (lf.scale_factors['Square'].log_prior_sigma == 2.0)
+
+
+        res = lf.residuals(sim, measures)
+        sf_prior_res = res[-1]
+
+        assert np.allclose(sf_prior_res, (np.log(5) - 1 / 2.0))
+
+
     def test_log_squared_loss_jacobian(self):
         # Test Jacobian:
 

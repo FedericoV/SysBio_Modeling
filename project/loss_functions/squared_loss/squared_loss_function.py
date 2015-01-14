@@ -34,9 +34,12 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
 
         # Now we add the scale factor priors in here.
         for measure, sf in self._scale_factors.items():
+            print 'jimmy', measure
             sf_res = sf.calc_sf_prior_residual()
+            print sf_res
             if sf_res is not None:
-                res.loc[("~Prior", "%s_SF" % measure)] = sf_res
+                res.ix[("~Prior", "%s_SF" % measure)] = sf_res
+                print len(res)
 
         return res
 
