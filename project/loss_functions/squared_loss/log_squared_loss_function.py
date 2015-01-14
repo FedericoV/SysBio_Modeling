@@ -5,6 +5,8 @@ import numpy as np
 from .squared_loss_function import SquareLossFunction
 from .log_scale_factor import LogScaleFactor
 
+import pandas as pd
+
 
 class LogSquareLossFunction(SquareLossFunction):
     def __init__(self, sf_groups=None):
@@ -49,10 +51,20 @@ class LogSquareLossFunction(SquareLossFunction):
 
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
+        # Now we add the scale factor priors in here.
+        sf_priors = []
+        sf_priors_idx = []
         for measure, sf in self._scale_factors.items():
+
             sf_res = sf.calc_sf_prior_residual()
             if sf_res is not None:
-                res.loc[("~Prior", "%s_SF" % measure)] = sf_res
+                sf_priors.append(sf_res)
+                sf_priors_idx.append(("~Prior", "%s_SF" % measure))
+
+        if len(sf_priors) > 0:
+            sf_priors = pd.Series(sf_priors, index=pd.MultiIndex.from_tuples(sf_priors_idx))
+            res = res.append(sf_priors)
+
         return res
 
     def jacobian(self, simulations, experiment_measures, simulations_jacobian):
@@ -85,9 +97,18 @@ class LogSquareLossFunction(SquareLossFunction):
                 # J = (dY_sim/dtheta / Y_sim) + (dB/dtheta / B)
                 scaled_jacobian.ix[(slice(None), measure), :] = measure_scaled_jac  # TODO: Very slow
 
+        # Now we add the scale factor priors in here.
+        sf_priors_grad = []
+        sf_priors_idx = []
         for measure, sf in self._scale_factors.items():
-            sf_prior_grad = sf.calc_sf_prior_gradient()
-            if sf_prior_grad is not None:
-                scaled_jacobian.ix[("~Prior", "%s_SF" % measure), :] = sf_prior_grad
+
+            grad = sf.calc_sf_prior_gradient()
+            if grad is not None:
+                sf_priors_grad.append(grad)
+                sf_priors_idx.append(("~Prior", "%s_SF" % measure))
+
+        if len(sf_priors_grad) > 0:
+            sf_priors_grad = pd.DataFrame(sf_priors_grad, index=pd.MultiIndex.from_tuples(sf_priors_idx))
+            scaled_jacobian = pd.concat([scaled_jacobian, sf_priors_grad])
 
         return scaled_jacobian

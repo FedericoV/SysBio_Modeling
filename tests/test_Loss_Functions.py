@@ -209,12 +209,10 @@ class TestLossFunction(TestCase):
         assert (lf.scale_factors['Square'].log_prior == 1.0)
         assert (lf.scale_factors['Square'].log_prior_sigma == 2.0)
 
-
         res = lf.residuals(sim, measures)
         sf_prior_res = res[-1]
 
-        assert np.allclose(sf_prior_res, (np.log(5) - 1 / 2.0))
-
+        assert np.allclose(sf_prior_res, ((np.log(5) - 1) / 2.0))
 
     def test_log_squared_loss_jacobian(self):
         # Test Jacobian:
