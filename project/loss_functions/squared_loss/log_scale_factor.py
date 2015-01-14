@@ -21,7 +21,6 @@ class LogScaleFactor(ScaleFactorABC):
             # We can split the summation to cache the terms that depend on measurements only
 
         log_sim_sum = np.exp(-np.sum((np.log(sim_data) / (exp_std**2))) / self._inv_std_sum)
-
         # Cached version - only have to recalculate this.
 
         self._sf = self._log_data_sum * log_sim_sum

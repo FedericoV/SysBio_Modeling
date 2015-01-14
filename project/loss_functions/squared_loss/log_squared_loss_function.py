@@ -21,18 +21,31 @@ class LogSquareLossFunction(SquareLossFunction):
         super(LogSquareLossFunction, self).__init__(sf_groups, LogScaleFactor)
 
     def residuals(self, simulations, experiment_measures):
+        if experiment_measures.values[:, 0].min().min() <= 0:
+            raise ValueError("LogSquare loss cannot handle measurements smaller or equal to zero")
+
         if len(self._scale_factors) != 0:
             # Scale simulations by scale factor
             self.update_scale_factors(simulations, experiment_measures)
             simulations = self.scale_sim_values(simulations)
 
-        # We use drop to get a view of the dataframe without priors
-        no_priors_sim = simulations.drop("~Prior", axis=0, level=0)
-        no_priors_exp = experiment_measures.drop("~Prior", axis=0, level=0)
+        simulations = simulations.copy()
+        experiment_measures = experiment_measures.copy()
 
-        # Take the log of everything except the priors
+        if "~Prior" in simulations.index.levels[0]:
+            # We use drop to get a view of the dataframe without priors
+            no_priors_sim = simulations.drop("~Prior", axis=0, level=0)
+            no_priors_exp = experiment_measures.drop("~Prior", axis=0, level=0)
+        else:
+            # Drop returns a copy if no "~Prior" was present.
+            no_priors_sim = simulations
+            no_priors_exp = experiment_measures
+
+        no_priors_sim.values[no_priors_sim.values[:, 0] == 0] += 1e-7
+        # Work around zero values in simulations.
+
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])
-        no_priors_exp.values[:, :-1] = np.log(no_priors_exp.values[:, :-1])
+        no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])
 
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
@@ -67,13 +80,14 @@ class LogSquareLossFunction(SquareLossFunction):
                 measure_sim = simulations.loc[(slice(None), measure), :].values[:, 0]
                 # Vector: (n_residuals)
 
-                measure_scaled_jac = (measure_jac.T / measure_sim).T + (sf_grad / sf)
+                measure_scaled_jac = (measure_jac / measure_sim[:, np.newaxis]) + (sf_grad / sf)
+
                 # J = (dY_sim/dtheta / Y_sim) + (dB/dtheta / B)
                 scaled_jacobian.ix[(slice(None), measure), :] = measure_scaled_jac  # TODO: Very slow
 
         for measure, sf in self._scale_factors.items():
-            sf_jac = sf.calc_sf_prior_gradient()
-            if sf_jac is not None:
-                scaled_jacobian.ix[("~Prior", "%s_SF" % measure), :] = sf_jac
+            sf_prior_grad = sf.calc_sf_prior_gradient()
+            if sf_prior_grad is not None:
+                scaled_jacobian.ix[("~Prior", "%s_SF" % measure), :] = sf_prior_grad
 
         return scaled_jacobian
