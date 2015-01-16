@@ -324,7 +324,7 @@ class Project(object):
             log_sf_sigma_prior = self._loss_function.scale_factors[measure].log_prior_sigma
             vals = np.array([log_sf_prior, log_sf_sigma_prior, np.nan])
             measurements_df = np.hstack((measurements_df, vals[:, np.newaxis]))
-            df_index.append(("~~SF_Prior", "~%s " % measure))
+            df_index.append(("~~SF_Prior", "~%s" % measure))
             # The ~ in front of measure name is to insure it comes after parameter priors.
             # TODO: Revamp this shitty indexing once I can get panda fast indexing to work
 
