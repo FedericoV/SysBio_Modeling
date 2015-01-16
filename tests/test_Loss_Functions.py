@@ -231,9 +231,6 @@ class TestLossFunction(TestCase):
         sf_prior_res = res[-1]
         assert np.allclose(sf_prior_res, ((np.log(5) - 1) / 2.0))
 
-
-        
-
     def test_log_squared_loss_jacobian(self):
         # Test Jacobian:
 
