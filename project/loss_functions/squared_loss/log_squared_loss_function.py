@@ -23,21 +23,20 @@ class LogSquareLossFunction(SquareLossFunction):
         super(LogSquareLossFunction, self).__init__(sf_groups, LogScaleFactor)
 
     def residuals(self, simulations, experiment_measures):
-        if experiment_measures.values[:, 0].min().min() <= 0:
-            raise ValueError("LogSquare loss cannot handle measurements smaller or equal to zero")
 
         if len(self._scale_factors) != 0:
             # Scale simulations by scale factor
             self.update_scale_factors(simulations, experiment_measures)
+            self.update_sf_priors_residuals(simulations)  # We update simulations in place
             simulations = self.scale_sim_values(simulations)
 
         simulations = simulations.copy()
         experiment_measures = experiment_measures.copy()
 
-        if "~Prior" in simulations.index.levels[0]:
+        if ("~Prior" in simulations.index.levels[0]) or ("~~SF_Prior" in simulations.index.levels[0]):
             # We use drop to get a view of the dataframe without priors
-            no_priors_sim = simulations.drop("~Prior", axis=0, level=0)
-            no_priors_exp = experiment_measures.drop("~Prior", axis=0, level=0)
+            no_priors_sim = simulations.drop(["~Prior", "~~SF_Prior"], axis=0, level=0)
+            no_priors_exp = experiment_measures.drop(["~Prior", "~~SF_Prior"], axis=0, level=0)
         else:
             # Drop returns a copy if no "~Prior" was present.
             no_priors_sim = simulations
@@ -46,25 +45,14 @@ class LogSquareLossFunction(SquareLossFunction):
         no_priors_sim.values[no_priors_sim.values[:, 0] == 0] += 1e-7
         # Work around zero values in simulations.
 
+        if no_priors_exp.values[:, 0].min().min() <= 0:
+            raise ValueError("LogSquare loss cannot handle measurements smaller or equal to zero")
+        # In measurements though, we cannot.
+
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])
         no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])
 
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
-
-        # Now we add the scale factor priors in here.
-        sf_priors = []
-        sf_priors_idx = []
-        for measure, sf in self._scale_factors.items():
-
-            sf_res = sf.calc_sf_prior_residual()
-            if sf_res is not None:
-                sf_priors.append(sf_res)
-                sf_priors_idx.append(("~Prior", "%s_SF" % measure))
-
-        if len(sf_priors) > 0:
-            sf_priors = pd.Series(sf_priors, index=pd.MultiIndex.from_tuples(sf_priors_idx))
-            res = res.append(sf_priors)
-
         return res
 
     def jacobian(self, simulations, experiment_measures, simulations_jacobian):
@@ -74,6 +62,7 @@ class LogSquareLossFunction(SquareLossFunction):
 
         self.update_scale_factors(simulations, experiment_measures)
         self.update_scale_factors_gradient(simulations, experiment_measures, simulations_jacobian)
+        self.update_sf_priors_gradient(simulations_jacobian)
 
         scaled_jacobian = simulations_jacobian.copy()
         for measure_group in self._scale_factors:
@@ -98,17 +87,4 @@ class LogSquareLossFunction(SquareLossFunction):
                 scaled_jacobian.ix[(slice(None), measure), :] = measure_scaled_jac  # TODO: Very slow
 
         # Now we add the scale factor priors in here.
-        sf_priors_grad = []
-        sf_priors_idx = []
-        for measure, sf in self._scale_factors.items():
-
-            grad = sf.calc_sf_prior_gradient()
-            if grad is not None:
-                sf_priors_grad.append(grad)
-                sf_priors_idx.append(("~Prior", "%s_SF" % measure))
-
-        if len(sf_priors_grad) > 0:
-            sf_priors_grad = pd.DataFrame(sf_priors_grad, index=pd.MultiIndex.from_tuples(sf_priors_idx))
-            scaled_jacobian = pd.concat([scaled_jacobian, sf_priors_grad])
-
         return scaled_jacobian

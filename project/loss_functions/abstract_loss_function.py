@@ -84,6 +84,37 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
             self._scale_factors[measure_group].update_sf(group_sims, group_exp_measures[:, 0],
                                                          group_exp_measures[:, 1])
 
+    def update_sf_priors_residuals(self, simulations):
+        """Modifies simulations in-place"""
+
+        # Now we add the scale factor priors in here.
+        for measure, sf in self._scale_factors.items():
+            sf_res = sf.calc_sf_prior_residual()
+            if sf_res is not None:
+                try:
+                    if type(measure) is str:
+                        measure_name = measure
+                    else:
+                        measure_name = next(iter(measure))  # Have to fix later probably
+                    simulations.loc[("~~SF_Prior", "~%s" % measure_name)].values[:, 0] = np.log(sf.sf)
+                except KeyError:
+                    raise KeyError("No prior in simulations for %s" % measure_name)
+
+    def update_sf_priors_gradient(self, simulations_jacobian):
+        """Modifies jacobian in-place"""
+
+        for measure, sf in self._scale_factors.items():
+            grad = sf.calc_sf_prior_gradient()
+            if grad is not None:
+                try:
+                    if type(measure) is str:
+                        measure_name = measure
+                    else:
+                        measure_name = next(iter(measure))  # Have to fix later probably
+                    simulations_jacobian.ix[("~~SF_Prior", "~%s" % measure_name), :] = grad
+                except KeyError:
+                    raise KeyError("No prior in jacobian for %s" % measure_name)
+
 
 class DifferentiableLossFunctionABC(LossFunctionABC):
     __metaclass__ = ABCMeta

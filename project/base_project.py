@@ -72,10 +72,11 @@ class Project(object):
         else:
             self._loss_function = loss_function
 
+        # Priors:
         self._parameter_priors = OrderedDict()
-        # Priors on Parameter
+        self._scale_factor_priors = []
 
-        # Take care of experiments now
+        # Experiments
         self._experiments = []  # A list of all the experiments in the project
         self.add_experiment(experiments)  # We use this to add the experiments to insure they are lex-sorted
         ###############################################################################################################
@@ -317,6 +318,16 @@ class Project(object):
                 # The ~ in front of prior is to insure it comes after the experiments when lexsorting.
                 # Unfortunate we have to do this...  would be much easier if Pandas indexing were faster.
 
+        # SF Priors:
+        for measure in self._scale_factor_priors:
+            log_sf_prior = self._loss_function.scale_factors[measure].log_prior
+            log_sf_sigma_prior = self._loss_function.scale_factors[measure].log_prior_sigma
+            vals = np.array([log_sf_prior, log_sf_sigma_prior, np.nan])
+            measurements_df = np.hstack((measurements_df, vals[:, np.newaxis]))
+            df_index.append(("~~SF_Prior", "~%s " % measure))
+            # The ~ in front of measure name is to insure it comes after parameter priors.
+            # TODO: Revamp this shitty indexing once I can get panda fast indexing to work
+
         df_index = pd.MultiIndex.from_tuples(df_index)
         measurements_df = pd.DataFrame(np.array(measurements_df).T, index=df_index, columns=['mean', 'std',
                                                                                              'timepoints'])
@@ -392,12 +403,19 @@ class Project(object):
             residual_idx += self._map_model_sim_to_measures(model_sim, t_sim, experiment,
                                                             residual_idx, use_experimental_timepoints)
 
+        # TODO: Slow panda indexing workaround
+        return residual_idx
+
+    def _update_prior_residuals(self, residual_idx):
+        """"Updates residuals with scale factors and parameters"""
+
         for p_group in self._parameter_priors:
             for settings in self._parameter_priors[p_group]:
                 p_idx = self._project_param_idx[p_group][settings]
                 log_p_value = self._project_param_vector[p_idx]
                 self._simulations_df.values[residual_idx, 0] = log_p_value
                 residual_idx += 1
+
     ##########################################################################################################
     # Sensitivity Methods
     ##########################################################################################################
@@ -473,12 +491,15 @@ class Project(object):
             residual_idx += self._map_model_jac_to_measures(model_jacobian, t_sim, experiment, residual_idx,
                                                             use_experimental_timepoints)
 
+    def _update_prior_jacobian(self, residual_idx):
+
         # In practice - we don't have to update this, ever.  Can optimize it out?
         for p_group in self._parameter_priors:
             for settings in self._parameter_priors[p_group]:
                 p_idx = self._project_param_idx[p_group][settings]
                 self._model_jacobian_df.values[residual_idx, p_idx] = 1
                 residual_idx += 1
+
 
     ##########################################################################################################
     # Parameter Priors
@@ -565,8 +586,7 @@ class Project(object):
                 out = self._simulations_df.copy()
 
         if not include_priors:
-            out.drop("~Prior", level=0, axis=0, inplace=True)
-
+            out.drop(["~Prior", "~~SF_Prior"], level=0, axis=0, inplace=True)
         return out
 
     @property
@@ -576,6 +596,11 @@ class Project(object):
     @property
     def model_jacobian_df(self):
         return self._model_jacobian_df
+
+    @property
+    def parameter_priors(self):
+        return copy.deepcopy(self._parameter_priors)
+
 
     ##########################################################################################################
     # Stuff
@@ -651,10 +676,13 @@ class Project(object):
         for exp_idx, experiment in enumerate(self._experiments):
             if exp_name == experiment.name:
                 return exp_idx
-        raise KeyError('%s not in experiments')
+        raise KeyError('%s not in experiments' % exp_name)
 
     def set_scale_factor_log_prior(self, measure_name, log_scale_factor_prior, log_sigma_scale_factor):
+        # TODO: Error checking
         self._loss_function.set_scale_factor_priors(measure_name, log_scale_factor_prior, log_sigma_scale_factor)
+        self._scale_factor_priors.append(measure_name)
+        self._update_project_settings()
 
     def set_parameter_log_prior(self, p_group, settings, log_scale_parameter_prior, log_sigma_parameter):
         try:
@@ -667,9 +695,6 @@ class Project(object):
 
         self._parameter_priors[p_group][settings] = (log_scale_parameter_prior, log_sigma_parameter)
         self._update_project_settings()
-
-    def get_parameter_priors(self):
-        return copy.deepcopy(self._parameter_priors)
 
     def get_param_index(self, parameter_group, settings='all'):
         if settings is 'all':
@@ -704,7 +729,8 @@ class Project(object):
 
         self.reset_calcs()
         self._project_param_vector = np.copy(project_param_vector)
-        self._sim_experiments()
+        res_idx = self._sim_experiments()
+        self._update_prior_residuals(res_idx)
 
         return self._loss_function.residuals(self._simulations_df, self._measurements_df)
 
@@ -744,7 +770,9 @@ class Project(object):
         self.reset_calcs()
         self._project_param_vector = np.copy(project_param_vector)
 
-        self._sim_experiments()
+        res_idx = self._sim_experiments()
+        self._update_prior_residuals(res_idx)
+
         self._calc_model_jacobian()
 
         return self._loss_function.jacobian(self._simulations_df, self._measurements_df, self._model_jacobian_df)

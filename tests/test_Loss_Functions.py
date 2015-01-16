@@ -204,15 +204,35 @@ class TestLossFunction(TestCase):
         measures.insert(1, 'std', np.ones_like(measures['mean']))
         measures['mean'] *= 5
 
-        lf.set_scale_factor_priors('Square', 1.0, 2.0)
+        lf.set_scale_factor_priors('Lin', 1.0, 2.0)
 
-        assert (lf.scale_factors['Square'].log_prior == 1.0)
-        assert (lf.scale_factors['Square'].log_prior_sigma == 2.0)
+        assert (lf.scale_factors['Lin'].log_prior == 1.0)
+        assert (lf.scale_factors['Lin'].log_prior_sigma == 2.0)
+
+        try:
+            lf.residuals(sim, measures)
+            assert AssertionError("Should have raises KeyError")
+            # We didn't include a ~~SF_Prior term in the simulations
+        except KeyError:
+            pass  # Good
+
+        sf_priors = pd.DataFrame(np.array([[1.0], [np.nan]]).T, columns=['mean', 'timecourse'],
+                                 index=pd.MultiIndex.from_tuples([("~~SF_Prior", "~Lin")]))
+
+        sim = pd.concat([sim, sf_priors], axis=0)
+
+        measures = sim.copy()
+        measures.insert(1, 'std', np.ones_like(measures['mean']))
+        measures['mean'] *= 5
+        measures.loc[("~~SF_Prior", "~Lin"), :] = np.array([1.0, 2.0, np.nan])
 
         res = lf.residuals(sim, measures)
-        sf_prior_res = res[-1]
 
+        sf_prior_res = res[-1]
         assert np.allclose(sf_prior_res, ((np.log(5) - 1) / 2.0))
+
+
+        
 
     def test_log_squared_loss_jacobian(self):
         # Test Jacobian:

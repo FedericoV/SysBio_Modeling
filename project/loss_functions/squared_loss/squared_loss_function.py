@@ -5,8 +5,6 @@ import numpy as np
 from ..abstract_loss_function import LossFunctionWithScaleFactors, DifferentiableLossFunctionABC
 from .linear_scale_factor import LinearScaleFactor
 
-import pandas as pd
-
 
 class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctionABC):
     def __init__(self, sf_groups=None, sf_type=LinearScaleFactor):
@@ -30,33 +28,20 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
         if len(self._scale_factors) != 0:
             # Scale simulations by scale factor
             self.update_scale_factors(simulations, experiment_measures)
+            self.update_sf_priors_residuals(simulations)  # We update simulations in place
             simulations = self.scale_sim_values(simulations)
 
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
-        # Now we add the scale factor priors in here.
-        sf_priors = []
-        sf_priors_idx = []
-        for measure, sf in self._scale_factors.items():
-
-            sf_res = sf.calc_sf_prior_residual()
-            if sf_res is not None:
-                sf_priors.append(sf_res)
-                sf_priors_idx.append(("~Prior", "%s_SF" % measure))
-
-        if len(sf_priors) > 0:
-            sf_priors = pd.Series(sf_priors, index=pd.MultiIndex.from_tuples(sf_priors_idx))
-            res = res.append(sf_priors)
-
         return res
 
     def jacobian(self, simulations, experiment_measures, simulations_jacobian):
-
         if len(self._scale_factors) == 0:
             return simulations_jacobian
 
         self.update_scale_factors(simulations, experiment_measures)
         self.update_scale_factors_gradient(simulations, experiment_measures, simulations_jacobian)
+        self.update_sf_priors_gradient(simulations_jacobian)
 
         scaled_jacobian = simulations_jacobian.copy()
         for measure_group in self._scale_factors:
@@ -78,20 +63,6 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
                 measure_scaled_jac = measure_jac * sf + measure_sim[:, np.newaxis] * sf_grad
                 # J = dY_sim/dtheta * B + dB/dtheta * Y_sim
                 scaled_jacobian.ix[(slice(None), measure), :] = measure_scaled_jac  # TODO: Very slow
-
-        # Now we add the scale factor priors in here.
-        sf_priors_grad = []
-        sf_priors_idx = []
-        for measure, sf in self._scale_factors.items():
-
-            grad = sf.calc_sf_prior_gradient()
-            if grad is not None:
-                sf_priors_grad.append(grad)
-                sf_priors_idx.append(("~Prior", "%s_SF" % measure))
-
-        if len(sf_priors_grad) > 0:
-            sf_priors_grad = pd.DataFrame(sf_priors_grad, index=pd.MultiIndex.from_tuples(sf_priors_idx))
-            scaled_jacobian = pd.concat([scaled_jacobian, sf_priors_grad])
 
         return scaled_jacobian
 
