@@ -1,7 +1,5 @@
 import numpy as np
 
-from measurement import TimecourseMeasurement
-
 
 class Experiment(object):
     """
@@ -10,23 +8,23 @@ class Experiment(object):
 
     Currently only supports time-course based measurements.
 
-    Attributes
-    ----------
-    name: string
-        The name of the experiment
-    exp_data: :class:`~TimecourseMeasurement:SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement`
-        A timeseries measurement.
-    fixed_parameters: dict, optional
-        A dictionary of parameter_name, value pairs which contains parameters which are
-        fixed in a particular experiment
+    :param name: The name of the experiment
+    :type: string
+    :param measurements: A timeseries measurement or a list of timeseries measurements associated with the experiment
+    :type list[SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement] |
+        SysBio_Modeling.measurement.timecourse_measurement.TimecourseMeasurement
+    :param fixed_parameters: A dictionary of parameter_name, value pairs which contains parameters which are
+        fixed in a particular experiment.
         Example:
             fixed_params = {'kon': 0.05, 'koff': 0.013}
-    experiment_settings:  dict, optional
-        A dictionary of settings upon which parameters that are optimized can vary.\n
+    :type dict, optional
+    :param experiment_settings: A dictionary of settings upon which parameters that are optimized can vary.\n
         Parameter dependency upon settings is specified in a separate file, allowing us
-        to use the same model and experiments, but only vary the dependencies.\n
+        to use the same model and experiments, but only vary the dependencies.
         Example:
             param_settings = {'decay_rate': 'high'}
+    :type: dict, optional
+
         """
 
     def __init__(self, name, measurements, fixed_parameters=None,
