@@ -33,22 +33,26 @@ class Project(object):
     def __init__(self, model, experiments, model_parameter_settings, measurement_to_model_map,
                  sf_groups=None, loss_function=SquareLossFunction):
         """
+        A project is a class used for multiple fitting.  It allows one to combine a model (a function that returns
+        an output when given a vector of parameters), experiments (a class that contains measurements and settings) and
+        a loss function into a single objective function that can be easily minimized.
 
 
         :type self: project.base_project.Project
-        :param model: An instance of the Model class that simulates experiments
+        :param model: An instance of the Model class used to simulate the experiments in the project.
         :type model: model.ode_model.OdeModel
-        :param experiments: A list of Experiment objects
+        :param experiments: A list of experiments.
         :type experiments: list[experiment.experiments.Experiment]
         :param model_parameter_settings: A dictionary which specifies how each parameter in the model is affected
-            by the Experiment settings.
+            by the settings of each experiment.
         :type model_parameter_settings: OrderedDict
-        :param measurement_to_model_map: A struct that contains the necessary information to map the output of the model
-        to the measurements of the model
+        :param measurement_to_model_map: A dictionary that contains the necessary information to map the output of the
+            model to the measurements of the model
         :type measurement_to_model_map: dict
         :param sf_groups: Which measurements share scale factors
-        :type sf_groups: list[set]
-        :param loss_function: A function to measure the distance between the simulated values and the measured values
+        :type sf_groups: list[frozenset]
+        :param loss_function: A function to measure the distance between the simulated values and the measured values.
+          optional.  Default is the simple weighted squared loss.
         :type loss_function: function
         :return: New Project
         :rtype: None
@@ -126,15 +130,17 @@ class Project(object):
         ###############################################################################################################
         self._project_param_vector = np.zeros((self.n_project_params,))
 
-        # Public variables - can modify them to change simulations.
-
-        self.use_parameter_priors = False  # Use the parameter priors in the Jacobian calculation
-
     ##########################################################################################################
     # Methods that update private variables
     ##########################################################################################################
 
     def _update_project_settings(self):
+        """
+        Updates private variables.
+
+        :return: None
+        :rtype: None
+        """
 
         self._project_param_idx, self._n_project_params, self._residuals_per_param = self._set_local_param_idx()
 
@@ -143,7 +149,8 @@ class Project(object):
         self._measurements_df = self._measurements_as_dataframe()
 
         self._simulations_df = self._measurements_df.copy()
-        self._simulations_df.drop('std', axis=1, inplace=True)
+        self._simulations_df = self._simulations_df.drop('std', axis=1)  # Not using 'inplace' because it causes cluster
+        # headaches
         self._simulations_df.values[:] = 0
 
         jac_cols = self.get_ordered_project_params()
@@ -180,6 +187,7 @@ class Project(object):
 
         no_settings_params = (all_model_parameters - set(local_pars) - set(project_fixed_pars) -
                               shared_pars - set(global_pars))
+        # These are parameters for which no settings were specified
 
         if len(no_settings_params) > 0:
             par_str = ", ".join(no_settings_params)
@@ -262,24 +270,11 @@ class Project(object):
             self._experiments[exp_idx].param_global_vector_idx = exp_param_idx
         return _project_param_idx, n_params, residuals_per_param
 
-    def _update_measurement_idx(self):
-        """
-        Lists all experiments that contain measurement of a particular variable
-        """
-        m_idx = OrderedDict()
-        for i, experiment in enumerate(self._experiments):
-            for measurement in experiment.measurements:
-                measure_name = measurement.variable_name
-                try:
-                    m_idx[measure_name].append(i)
-                except KeyError:
-                    m_idx[measure_name] = []
-                    m_idx[measure_name].append(i)
-        return m_idx
-
     def _update_n_residuals(self, include_zero=False):
         """
         Calculates the total number of experimental points across all experiments
+        :return: Number of measurement residuals in project
+        :rtype: int
         """
         n_res = 0
         for experiment in self._experiments:
@@ -294,6 +289,12 @@ class Project(object):
     # Private Simulation Methods
     ##########################################################################################################
     def _measurements_as_dataframe(self):
+        """
+        Maps all the measurements from experiments, parameter priors, and scale factor priors
+        in a multi-indexed dataframe
+        :return: A dataframe containing all measurements from experiments and priors
+        :rtype: pandas.DataFrame
+        """
         measurements_df = np.zeros((3, 0))
         df_index = []
 
@@ -336,7 +337,12 @@ class Project(object):
 
     def get_experiment_parameters(self, experiment):
         """
-        Extracts the experiment-specific parameters from the project parameter vector
+        Obtains the parameters used to simulate an experiment using the model.
+
+        :param experiment: The experiment for which we want to obtain the parameters
+        :type experiment.experiments.Experiment
+        :return: A vector of parameters that will be used as input to the model
+        :rtype: numpy.array
         """
         m = self._model
         exp_param_vector = np.zeros((len(m.param_order),))
@@ -353,8 +359,12 @@ class Project(object):
 
     def _map_model_sim_to_measures(self, model_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
         """
-        Maps a model simulation to a particular measurement.  This is necessary because not all model variables
-        map cleanly to a single measurement.
+        Maps the output of the model simulations to a measurement in an experiment
+
+        Implementation detail:
+        Instead of referring to experiments and measurements by their name using fancy pandas indexing, we manually
+        keep track of the residual index because it's much, much faster
+
         """
         measure_sim_dict = OrderedDict()
         total_experiment_residuals = 0
@@ -382,6 +392,10 @@ class Project(object):
 
         use_experimental_timepoints should always be true when the simulations are used to calculate
         scale factors.
+
+        Implementation detail:
+        Instead of referring to experiments and measurements by their name using fancy pandas indexing, we manually
+        keep track of the residual index because it's much, much faster
         """
 
         if self._project_param_vector is None:
@@ -407,7 +421,9 @@ class Project(object):
         return residual_idx
 
     def _update_prior_residuals(self, residual_idx):
-        """"Updates residuals with scale factors and parameters"""
+        """"
+        Updates self._simulations_df inplace with residuals with respect to parameter priors
+        """
 
         for p_group in self._parameter_priors:
             for settings in self._parameter_priors[p_group]:
@@ -422,7 +438,8 @@ class Project(object):
 
     def _map_model_jac_to_measures(self, jacobian_sim, t_sim, experiment, res_idx, use_experimental_timepoints=True):
         """
-        Map the jacobian with respect to model parameters to the jacobian with respect to the project parameters
+        Maps the jacobian of model variables with respect to model parameters to the jacobian of the measured variables
+        with respect to project parameters.
         """
         m = self._model
 
@@ -467,6 +484,8 @@ class Project(object):
         return extra_residual
 
     def _calc_model_jacobian(self, exp_subset='all', use_experimental_timepoints=True):
+        # Calculates the jacobian of the model variables with respect to model parameters, then maps it to the jacobian
+        # of the measured variable with respect to project parameters
         if self._project_param_vector is None:
             raise ValueError('Parameter vector not set')
 
@@ -492,53 +511,12 @@ class Project(object):
                                                             use_experimental_timepoints)
 
     def _update_prior_jacobian(self, residual_idx):
-
         # In practice - we don't have to update this, ever.  Can optimize it out?
         for p_group in self._parameter_priors:
             for settings in self._parameter_priors[p_group]:
                 p_idx = self._project_param_idx[p_group][settings]
                 self._model_jacobian_df.values[residual_idx, p_idx] = 1
                 residual_idx += 1
-
-
-    ##########################################################################################################
-    # Parameter Priors
-    ##########################################################################################################
-
-    def _calc_parameters_prior_jacobian(self):
-        """
-        Since all parameters are already in logspace, and the priors are all in log space:
-        parameter_prior = (log(theta) - log_prior / sigma) **2 -
-        We work with log(theta) directly, so d(log(theta))/d(log(theta)) is 1.
-        """
-        parameter_priors_jacobian = []
-        for parameter_group in self._parameter_priors:
-            for setting in self._parameter_priors[parameter_group]:
-                p_idx = self._project_param_idx[parameter_group][setting]
-                #log_p_value = self._project_param_vector[p_idx]
-                #exp_inv = 1 / np.exp(log_p_value)
-                jac = np.zeros((self.n_project_params,))
-                jac[p_idx] = 1.0
-                parameter_priors_jacobian.append(jac)
-
-        return np.array(parameter_priors_jacobian)
-
-    def _calc_parameters_prior_residuals(self):
-        """
-        Due to internal use of OrderedDict for _parameter_priors and _parameter_priors[parameter_group] the
-        order in which the residuals and the jacobian are calculated is the same
-        """
-        parameter_prior_residuals = []
-
-        for p_group in self._parameter_priors:
-            for settings in self._parameter_priors[p_group]:
-                p_idx = self._project_param_idx[p_group][settings]
-                log_p_value = self._project_param_vector[p_idx]
-                log_parameter_prior, log_sigma_parameter = self._parameter_priors[p_group][settings]
-                res = (log_p_value - log_parameter_prior) / log_sigma_parameter
-                parameter_prior_residuals.append(res)
-
-        return np.array(parameter_prior_residuals)
 
     ##########################################################################################################
     # Setters and Getters
@@ -965,6 +943,9 @@ class Project(object):
     def group_experiments(self, settings_groups):
         """
         Returns a dictionary with experiments with same settings grouped together
+        :param settings_groups:
+        :type settings_groups: list
+        :return:
         """
         grouped_experiments = defaultdict(list)
 
@@ -986,9 +967,9 @@ class Project(object):
         from matplotlib.colors import rgb2hex
         import seaborn as sns
 
-        if not use_experimental_timepoints and self._project_param_vector is not None:
+        if not use_experimental_timepoints:
             self._sim_experiments(use_experimental_timepoints=False)
-            sims = self.get_simulations(scaled=True)
+        sims = self.get_simulations(scaled=True)
 
         # We try to group together experiments according to the settings.
         if settings_groups is not None:
@@ -1028,12 +1009,13 @@ class Project(object):
                     if self._project_param_vector is not None:
                         sim_data = sims.loc[(experiment.name, measure_name), 'mean']
                         sim_t = sims.loc[(experiment.name, measure_name), 'timepoints']
-                        ax.plot(sim_t, sim_data, color=color)
+                        ax.plot(sim_t, sim_data, color=color, label=experiment.name)
 
                         if np.max(sim_data) > ymax:
                             ymax = np.max(sim_data)
 
                 ax.set_ylim((0, ymax))
+                ax.legend(loc='best')
 
             fig.suptitle(group.__repr__())
 
