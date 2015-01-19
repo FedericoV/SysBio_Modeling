@@ -4,6 +4,19 @@ from .abstract_measurement import MeasurementABC
 
 
 class TimecourseMeasurement(MeasurementABC):
+    """
+    A series of measured values, with their associated timepoints and standard deviations (optimal).
+
+    :param variable_name: The name of the measured variable
+    :type: string
+    :param measurement_value: An (n,) dimensional array containing measurements of the variable_name
+    :type: numpy.array
+    :param measurement_time: An (n,) dimensional array containing the times at which measurements were carried out
+    :type: numpy.array
+    :type: measurement_std: An (n,) dimensional array indicating the uncertanties in the measurements (optional)
+    :type: numpy.array
+
+    """
     def __init__(self, variable_name, measurement_value, measurement_time, measurement_std=None):
         super(TimecourseMeasurement, self).__init__(variable_name, measurement_value, measurement_std)
         if not (len(measurement_value) == len(measurement_time)):
