@@ -988,7 +988,7 @@ class Project(object):
 
         if not use_experimental_timepoints and self._project_param_vector is not None:
             self._sim_experiments(use_experimental_timepoints=False)
-            # We simulate again, this time with all timepoints, after SF are already calculated.
+            sims = self.get_simulations(scaled=True)
 
         # We try to group together experiments according to the settings.
         if settings_groups is not None:
@@ -1012,7 +1012,6 @@ class Project(object):
 
             for measure_name, ax in zip(measured_variables, axs):
                 ax.hold(True)
-                sf = self._scale_factors[measure_name].sf
                 palette = sns.color_palette("hls", len(grouped_experiments[group]))
                 # For each group, we want to plot different variables in different groups
                 ymax = 0
@@ -1022,19 +1021,17 @@ class Project(object):
 
                     measurement = experiment.get_variable_measurements(measure_name)
                     measurement.plot_measurement(ax=ax, color=color, marker='o', linestyle='--')
+
                     if np.max(measurement.values > ymax):
                         ymax = np.max(measurement.values)
 
-                    exp_idx = self.get_experiment_index(experiment.name)
-
                     if self._project_param_vector is not None:
-                        exp_sim = self._all_sims[exp_idx][measure_name]
-                        sim_data = exp_sim['value']
-                        sim_t = exp_sim['timepoints']
-                        ax.plot(sim_t, sim_data * sf, color=color)
+                        sim_data = sims.loc[(experiment.name, measure_name), 'mean']
+                        sim_t = sims.loc[(experiment.name, measure_name), 'timepoints']
+                        ax.plot(sim_t, sim_data, color=color)
 
-                        if np.max(sim_data * sf) > ymax:
-                            ymax = np.max(sim_data * sf)
+                        if np.max(sim_data) > ymax:
+                            ymax = np.max(sim_data)
 
                 ax.set_ylim((0, ymax))
 
