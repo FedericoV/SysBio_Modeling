@@ -278,7 +278,6 @@ class TestLossFunction(TestCase):
         num_log_sf_grad = approx_fprime(p1, calc_log_sf, centered=True)
         scaled_log_lf.update_scale_factors_gradient(sim, measures, jac)
         log_sf_grad = scaled_log_lf.scale_factors['Val'].gradient
-
         assert np.allclose(num_log_sf_grad, log_sf_grad, rtol=0.01)
 
         def calc_log_residuals(new_p):

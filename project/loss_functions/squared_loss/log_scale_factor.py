@@ -30,7 +30,6 @@ class LogScaleFactor(ScaleFactorABC):
         """
         Analytically calculates the gradient of the scale factors for each measurement
         """
-        # TODO: TEST
         exp_std /= exp_data  # scaling of standard deviation by mean because of log
         sim_std_prod = (sim_data * exp_std**2)
         exp_grad = (-1.0/self._inv_std_sum) * np.sum((sim_jac.T / sim_std_prod), axis=1)
