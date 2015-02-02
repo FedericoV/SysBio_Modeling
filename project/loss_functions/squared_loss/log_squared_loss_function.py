@@ -27,7 +27,7 @@ class LogSquareLossFunction(SquareLossFunction):
         if len(self._scale_factors) != 0:
             # Scale simulations by scale factor
             self.update_scale_factors(simulations, experiment_measures)
-            self.update_sf_priors_residuals(simulations)  # We update simulations in place
+            self.update_sf_priors_residuals(simulations)
             simulations = self.scale_sim_values(simulations)
 
         simulations = simulations.copy()
@@ -49,9 +49,11 @@ class LogSquareLossFunction(SquareLossFunction):
             raise ValueError("LogSquare loss cannot handle measurements smaller or equal to zero")
         # In measurements though, we cannot.
 
+        # Those are views, they update simulations and experiment_measures in place by modifying the view
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])  # Logscale simulations
         no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 0]  # Scale standard deviation by mean
         no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])  # Logscale mean
+
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
         return res
 
