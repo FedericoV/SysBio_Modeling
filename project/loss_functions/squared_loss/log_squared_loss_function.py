@@ -50,7 +50,7 @@ class LogSquareLossFunction(SquareLossFunction):
         # In measurements though, we cannot.
 
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])  # Logscale simulations
-        no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 1]  # Scale standard deviation by mean
+        no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 0]  # Scale standard deviation by mean
         no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])  # Logscale mean
         res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
         return res
