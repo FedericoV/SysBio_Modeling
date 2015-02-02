@@ -30,10 +30,10 @@ class Experiment(object):
     def __init__(self, name, measurements, fixed_parameters=None,
                  experiment_settings=None):
 
-        if name[0].isalpha():
+        if name[0].isalnum():
             self.name = name
         else:
-            raise ValueError("Experiment names must start with a letter")
+            raise ValueError("Experiment names must start with a letter or number")
 
         self.fixed_parameters = fixed_parameters
         self.settings = {}
