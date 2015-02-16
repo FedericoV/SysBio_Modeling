@@ -30,6 +30,11 @@ class LogSquareLossFunction(SquareLossFunction):
             self.update_sf_priors_residuals(simulations)
             simulations = self.scale_sim_values(simulations)
 
+        ################################################################################
+        # In a Pandas DataFrame, there is no easy way to 'reverse' index - to say we want all elements except the
+        # priors.  The easiest way to do this is to get a view by dropping the priors, then modify the view,
+        # modifying the view modifies the original DataFrame.
+        ################################################################################
         simulations = simulations.copy()
         experiment_measures = experiment_measures.copy()
 
@@ -49,13 +54,13 @@ class LogSquareLossFunction(SquareLossFunction):
             raise ValueError("LogSquare loss cannot handle measurements smaller or equal to zero")
         # In measurements though, we cannot.
 
-        # Those are views, they update simulations and experiment_measures in place by modifying the view
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])  # Logscale simulations
+
         no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 0]  # Scale standard deviation by mean
+        # if a = 10 +- 1, and b = log(a), then b = log(10) +- (1/10) (basic prop of error)
         no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])  # Logscale mean
 
-        res = (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
-        return res
+        return (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
 
     def jacobian(self, simulations, experiment_measures, simulations_jacobian):
 
