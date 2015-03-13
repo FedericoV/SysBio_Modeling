@@ -118,7 +118,8 @@ class OdeModel(ModelABC):
                 self.sens_model_jac(y, t, jacout, experiment_params)
                 return jacout
 
-        jacobian_sim = odeint(func_wrapper, init_conditions, t_sim, Dfun=jac_wrapper, col_deriv=True)
+        jacobian_sim = odeint(func_wrapper, init_conditions, t_sim, Dfun=jac_wrapper, col_deriv=True,
+                              rtol=1e-10, atol=1e-10)
         # y_sim has dimensions (t_sim, n_vars + n_exp_params*n_vars)
         sensitivity_eqns = jacobian_sim[:, self.n_vars:]
         return sensitivity_eqns
@@ -162,5 +163,6 @@ class OdeModel(ModelABC):
             self._model(y, t, yout, experiment_params)
             return yout
 
-        model_sim = odeint(func_wrapper, init_conditions, t_sim, Dfun=jac_wrapper, col_deriv=True)
+        model_sim = odeint(func_wrapper, init_conditions, t_sim, Dfun=jac_wrapper, col_deriv=True,
+                           rtol=1e-10, atol=1e-10)
         return model_sim

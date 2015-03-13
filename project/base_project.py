@@ -853,12 +853,7 @@ class Project(object):
         entropy: float
             The sum of the entropy of all scale factors in the model
         """
-        entropy = 0.0
-        for measure_name in self._measurement_to_model_map:
-            if self.use_scale_factors[measure_name]:
-                sf_iter = self.measure_iterator(measure_name)
-                entropy += temperature * self._scale_factors[measure_name].calc_scale_factor_entropy(sf_iter,
-                                                                                                     temperature)
+        entropy = self._loss_function.total_sf_entropy(self._simulations_df, self._measurements_df, temperature)
         return entropy
 
     def free_energy(self, project_param_vector, temperature=1):
@@ -878,7 +873,7 @@ class Project(object):
         """
         rss = self.calc_sum_square_residuals(project_param_vector)
         entropy = self.calc_scale_factors_entropy(temperature)
-        free_energy = rss - temperature * entropy
+        free_energy = rss - entropy
         return free_energy
 
     ##########################################################################################################

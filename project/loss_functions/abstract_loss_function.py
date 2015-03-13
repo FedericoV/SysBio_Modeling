@@ -58,36 +58,40 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
                 scaled_sim_values.loc[(slice(None), measure), 'mean'] *= sf  # TODO: Very slow.
         return scaled_sim_values
 
+    @staticmethod
+    def _group_simulations_and_experiments(simulations, experiment_measures, measure_group):
+        if type(measure_group) is str:
+            _measure_group = [measure_group]
+        else:
+            _measure_group = measure_group
+            # Hack to work around scale factor groups
+            # TODO: Refactor OrderedHashDict
+
+        # Multiple measures can share the same scale factor
+        sf_group_sims = []
+        sf_group_exp = []
+        for measure in _measure_group:
+            sf_group_sims.append(simulations.loc[(slice(None), measure), :].values[:, 0])  # Values
+            sf_group_exp.append(experiment_measures.loc[(slice(None), measure), :].values[:, :2])
+            # Here we get values and std
+            # Probably slow indexing here.  Have to parse it carefully.
+
+        sf_group_sims = np.hstack(sf_group_sims)
+        sf_group_exp = np.vstack(sf_group_exp)
+        sf_group_val = sf_group_exp[:, 0]
+        sf_group_std = sf_group_exp[:, 1]
+
+        assert len(sf_group_sims) == len(sf_group_exp)
+        return sf_group_sims, sf_group_val, sf_group_std
+
     def update_scale_factors(self, simulations, experiment_measures):
         # Note - relies on carefully sorted dataframes!!
         for measure_group in self._scale_factors:
-            if type(measure_group) is str:
-                _measure_group = [measure_group]
-            else:
-                _measure_group = measure_group
-                # Hack to work around scale factor groups
-                # TODO: Refactor OrderedHashDict
-
-            # Multiple measures can share the same scale factor
-            group_sims = []
-            group_exp_measures = []
-            for measure in _measure_group:
-                group_sims.append(simulations.loc[(slice(None), measure), :].values[:, 0])  # Values
-                group_exp_measures.append(experiment_measures.loc[(slice(None), measure), :].values[:, :2])
-                # Here we get values and std
-                # Probably slow indexing here.  Have to parse it carefully.
-
-            group_sims = np.hstack(group_sims)
-            group_exp_measures = np.vstack(group_exp_measures)
-
-            assert len(group_sims) == len(group_exp_measures)
-            self._scale_factors[measure_group].update_sf(group_sims, group_exp_measures[:, 0],
-                                                         group_exp_measures[:, 1])
+            sims, vals, stds = self._group_simulations_and_experiments(simulations, experiment_measures, measure_group)
+            self._scale_factors[measure_group].update_sf(sims, vals, stds)
 
     def update_sf_priors_residuals(self, simulations):
         """Modifies simulations in-place"""
-
-        # Now we add the scale factor priors in here.
         for measure, sf in self._scale_factors.items():
             sf_res = sf.calc_sf_prior_residual()
             if sf_res is not None:
@@ -114,6 +118,20 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
                     simulations_jacobian.ix[("~~SF_Prior", "~%s" % measure_name), :] = grad
                 except KeyError:
                     raise KeyError("No prior in jacobian for %s" % measure_name)
+
+    def total_sf_entropy(self, simulations, experiment_measures, t=1.0):
+        """Calculates the total entropy from scale factors.
+        Basically, a regularization term useful in making MCMC sampling 'well-behaved'
+        """
+
+        # Note - relies on carefully sorted dataframes!!
+        entropy = 0.0
+
+        for measure_group in self._scale_factors:
+            sims, vals, stds = self._group_simulations_and_experiments(simulations, experiment_measures, measure_group)
+            entropy += t*self._scale_factors[measure_group].calc_scale_factor_entropy(sims, vals, stds, t)
+
+        return entropy
 
 
 class DifferentiableLossFunctionABC(LossFunctionABC):
