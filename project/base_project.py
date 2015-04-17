@@ -956,7 +956,8 @@ class Project(object):
 
         return grouped_experiments
 
-    def plot_experiments(self, settings_groups=None, labels=None, use_experimental_timepoints=True):
+    def plot_experiments(self, settings_groups=None, labels=None, use_experimental_timepoints=True,
+                         sims=None):
         # TODO: fix labels
         import matplotlib.pyplot as plt
         from matplotlib.colors import rgb2hex
@@ -964,7 +965,9 @@ class Project(object):
 
         if not use_experimental_timepoints:
             self._sim_experiments(use_experimental_timepoints=False)
-        sims = self.get_simulations(scaled=True)
+
+        if sims is None:
+            sims = self.get_simulations(scaled=True)
 
         # We try to group together experiments according to the settings.
         if settings_groups is not None:
@@ -1002,12 +1005,27 @@ class Project(object):
                         ymax = np.max(measurement.values)
 
                     if self._project_param_vector is not None:
-                        sim_data = sims.loc[(experiment.name, measure_name), 'mean']
-                        sim_t = sims.loc[(experiment.name, measure_name), 'timepoints']
-                        ax.plot(sim_t, sim_data, color=color, label=experiment.name)
 
-                        if np.max(sim_data) > ymax:
-                            ymax = np.max(sim_data)
+                        if 'std' not in sims.columns:
+                            sim_data = sims.loc[(experiment.name, measure_name), 'mean']
+                            sim_t = sims.loc[(experiment.name, measure_name), 'timepoints']
+                            ax.plot(sim_t, sim_data, color=color, label=experiment.name)
+                            max_sim_data = np.max(sim_data)
+
+                        else:
+                            # We provided data with standard deviation
+                            sim_data = sims.loc[(experiment.name, measure_name), 'mean']
+                            sim_t = sims.loc[(experiment.name, measure_name), 'timepoints']
+                            sim_std = sims.loc[(experiment.name, measure_name), 'std']
+
+                            ax.errorbar(sim_t, sim_data, yerr=sim_std,
+                                        linestyle='-', color=color, label=experiment.name)
+
+                            ax.fill_between(sim_t, sim_data + sim_std, sim_data - sim_std, facecolor=color, alpha=0.5)
+                            max_sim_data = np.max(sim_data + sim_std)
+
+                        if max_sim_data > ymax:
+                            ymax = max_sim_data
 
                 ax.set_ylim((0, ymax))
                 ax.legend(loc='best')
