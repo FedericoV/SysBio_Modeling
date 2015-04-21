@@ -7,7 +7,6 @@ import pandas as pd
 
 from . import utils
 from loss_functions.squared_loss import SquareLossFunction
-from loss_functions.abstract_loss_function import LossFunctionWithScaleFactors
 
 
 class Project(object):
@@ -417,7 +416,7 @@ class Project(object):
             residual_idx += self._map_model_sim_to_measures(model_sim, t_sim, experiment,
                                                             residual_idx, use_experimental_timepoints)
 
-        # TODO: Slow panda indexing workaround
+        # Slow panda indexing workaround
         return residual_idx
 
     def _update_prior_residuals(self, residual_idx):
@@ -578,7 +577,6 @@ class Project(object):
     @property
     def parameter_priors(self):
         return copy.deepcopy(self._parameter_priors)
-
 
     ##########################################################################################################
     # Stuff
