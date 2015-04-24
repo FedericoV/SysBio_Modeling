@@ -46,7 +46,7 @@ class SquareLossFunction(LossFunctionWithScaleFactors, DifferentiableLossFunctio
         if simulations['mean'].isnull().any() or simulations_jacobian.isnull().any().any():
             # Check if there are NaN in simulations or Jacobian
             scaled_jacobian = simulations_jacobian.copy()
-            scaled_jacobian.values = np.inf
+            scaled_jacobian.values[:, :] = np.inf
             return scaled_jacobian
 
         if len(self._scale_factors) == 0:

@@ -748,7 +748,6 @@ class Project(object):
 
         res_idx = self._sim_experiments()
         self._update_prior_residuals(res_idx)
-
         self._calc_model_jacobian()
 
         return self._loss_function.jacobian(self._simulations_df, self._measurements_df, self._model_jacobian_df)

@@ -82,7 +82,7 @@ class LossFunctionWithScaleFactors(LossFunctionABC):
         sf_group_std = sf_group_exp[:, 1]
 
         assert len(sf_group_sims) == len(sf_group_exp)
-        return sf_group_sims, sf_group_val, sf_group_std
+        return sf_group_sims.copy(), sf_group_val.copy(), sf_group_std.copy()
 
     def update_scale_factors(self, simulations, experiment_measures):
         # Note - relies on carefully sorted dataframes!!

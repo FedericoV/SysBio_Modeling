@@ -30,6 +30,12 @@ class LogSquareLossFunction(SquareLossFunction):
             self.update_sf_priors_residuals(simulations)
             simulations = self.scale_sim_values(simulations)
 
+        if simulations['mean'].isnull().any():
+            # Check if there are NaN or zeros (which cause NaN with logs) in the simulations
+            res = np.zeros_like(simulations['mean'])
+            res.fill(np.inf)
+            return res
+
         ################################################################################
         # In a Pandas DataFrame, there is no easy way to 'reverse' index - to say we want all elements except the
         # priors.  The easiest way to do this is to get a view by dropping the priors, then modify the view,
@@ -47,9 +53,6 @@ class LogSquareLossFunction(SquareLossFunction):
             no_priors_sim = simulations
             no_priors_exp = experiment_measures
 
-        no_priors_sim.values[no_priors_sim.values[:, 0] == 0] += 1e-7
-        # Work around zero values in simulations.
-
         if no_priors_exp.values[:, 0].min().min() <= 0:
             raise ValueError("LogSquare loss cannot handle measurements smaller or equal to zero")
         # In measurements though, we cannot.
@@ -57,7 +60,7 @@ class LogSquareLossFunction(SquareLossFunction):
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])  # Logscale simulations
 
         no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 0]  # Scale standard deviation by mean
-        # if a = 10 +- 1, and b = log(a), then b = log(10) +- (1/10) (basic prop of error)
+        # if a = 10 +- 1, and b = log(a), then b = log(10) +- (1/10) (basic propagation of error)
         no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])  # Logscale mean
 
         return (simulations['mean'] - experiment_measures['mean']) / experiment_measures['std']
