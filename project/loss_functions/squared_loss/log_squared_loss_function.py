@@ -5,8 +5,6 @@ import numpy as np
 from .squared_loss_function import SquareLossFunction
 from .log_scale_factor import LogScaleFactor
 
-import pandas as pd
-
 
 class LogSquareLossFunction(SquareLossFunction):
     def __init__(self, sf_groups=None):
