@@ -8,6 +8,7 @@ from statsmodels.tools.numdiff import approx_fprime
 
 from ..project.loss_functions.squared_loss import SquareLossFunction
 from ..project.loss_functions.squared_loss import LogSquareLossFunction
+from ..project.loss_functions.squared_loss import NormalizedSquareLossFunction
 
 
 __author__ = 'Federico Vaggi'
@@ -292,3 +293,15 @@ class TestLossFunction(TestCase):
         scaled_lf_jac = scaled_log_lf.jacobian(sim, measures, jac)
 
         assert np.allclose(scaled_lf_jac.values, scaled_num_jac, rtol=0.01)
+
+    def test_scaled_loss_function(self):
+        lf = NormalizedSquareLossFunction()
+
+        # Testing Residuals
+        measures = TestLossFunction.sim.copy()
+        measures.insert(1, 'std', np.ones_like(measures['mean']))
+
+        random_noise = np.random.randn(len(measures['mean']))
+        measures['mean'] -= random_noise
+        residuals = lf.residuals(TestLossFunction.sim, measures)
+        assert np.allclose(random_noise, residuals)
