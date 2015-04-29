@@ -294,8 +294,9 @@ class TestLossFunction(TestCase):
 
         assert np.allclose(scaled_lf_jac.values, scaled_num_jac, rtol=0.01)
 
-    def test_scaled_loss_function(self):
-        lf = NormalizedSquareLossFunction()
+    def test_normalized_loss_function(self):
+        """Check that normalized loss function is the same as the l2 loss function divided by mean"""
+        lf = SquareLossFunction()
 
         # Testing Residuals
         measures = TestLossFunction.sim.copy()
@@ -304,4 +305,8 @@ class TestLossFunction(TestCase):
         random_noise = np.random.randn(len(measures['mean']))
         measures['mean'] -= random_noise
         residuals = lf.residuals(TestLossFunction.sim, measures)
-        assert np.allclose(random_noise, residuals)
+
+        norm_lf = NormalizedSquareLossFunction()
+        norm_residuals = norm_lf.residuals(TestLossFunction.sim, measures)
+
+        assert np.allclose(norm_residuals*measures['mean'], residuals)
