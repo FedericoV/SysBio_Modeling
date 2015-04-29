@@ -57,7 +57,7 @@ class LogSquareLossFunction(SquareLossFunction):
 
         no_priors_sim.values[:, 0] = np.log(no_priors_sim.values[:, 0])  # Logscale simulations
 
-        no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 0]  # Scale standard deviation by mean
+        # no_priors_exp.values[:, 1] /= no_priors_exp.values[:, 0]  # Scale standard deviation by mean
         # if a = 10 +- 1, and b = log(a), then b = log(10) +- (1/10) (basic propagation of error)
         no_priors_exp.values[:, 0] = np.log(no_priors_exp.values[:, 0])  # Logscale mean
 
