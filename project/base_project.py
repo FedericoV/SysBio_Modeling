@@ -96,19 +96,29 @@ class Project(object):
         self._update_project_settings()  # This initializes all the above variables
 
         self._measurement_to_model_map = {}
+        self._make_mapping(measurement_to_model_map)
         # TODO: Direct bindings
+
+        # Variables modified upon simulation:
+        ###############################################################################################################
+        self._project_param_vector = np.zeros((self.n_project_params,))
+
+    ##########################################################################################################
+    # Methods that update private variables
+    ##########################################################################################################
+    def _make_mapping(self, measurement_to_model_map):
         for measure_name, (mapping_type, mapping_args) in measurement_to_model_map.items():
 
             if mapping_type == 'direct':
-                assert(type(mapping_args) is int)
-                if mapping_args >= model.n_vars:
-                    raise ValueError('Index (%d) has to be smaller than %d' % (mapping_args, model.n_vars))
+                assert (type(mapping_args) is int)
+                if mapping_args >= self._model.n_vars:
+                    raise ValueError('Index (%d) has to be smaller than %d' % (mapping_args, self._model.n_vars))
                 parameters = mapping_args  # Index of model variable
                 variable_map_fcn = utils.direct_model_var_to_measure
                 jacobian_map_fcn = utils.direct_model_jac_to_measure_jac
 
             elif mapping_type == 'sum':
-                assert(type(mapping_args) is list)
+                assert (type(mapping_args) is list)
                 parameters = mapping_args  # Index of model variables
                 variable_map_fcn = utils.sum_model_vars_to_measure
                 jacobian_map_fcn = utils.sum_model_jac_to_measure_jac
@@ -124,14 +134,6 @@ class Project(object):
             mapper = {'parameters': parameters, 'model_variables_to_measure_func': variable_map_fcn,
                       'model_jac_to_measure_jac_func': jacobian_map_fcn}
             self._measurement_to_model_map[measure_name] = mapper
-
-        # Variables modified upon simulation:
-        ###############################################################################################################
-        self._project_param_vector = np.zeros((self.n_project_params,))
-
-    ##########################################################################################################
-    # Methods that update private variables
-    ##########################################################################################################
 
     def _update_project_settings(self):
         """
@@ -198,13 +200,17 @@ class Project(object):
         _project_param_idx = {}
         # This dict maps the location of parameters in the global parameter vector.
         residuals_per_param = defaultdict(lambda: defaultdict(lambda: 0))
+        # How many total measurements are there that constrain a given parameter?
 
+        # First, we take care of the Global parameters.  Those are easy - they just one one setting across all
+        # experiments.
         n_params = 0
         for p in global_pars:
             _project_param_idx[p] = {}
             _project_param_idx[p]['Global'] = n_params
             n_params += 1
 
+        # Now, we take care of fixed AND shared parameters
         for exp_idx, experiment in enumerate(self._experiments):
             exp_param_idx = OrderedDict()
 
@@ -363,7 +369,6 @@ class Project(object):
         Implementation detail:
         Instead of referring to experiments and measurements by their name using fancy pandas indexing, we manually
         keep track of the residual index because it's much, much faster
-
         """
         measure_sim_dict = OrderedDict()
         total_experiment_residuals = 0
@@ -389,7 +394,7 @@ class Project(object):
         """
         Simulates all the experiments in the project.
 
-        use_experimental_timepoints should always be true when the simulations are used to calculate
+        use_experimental_timepoints should always be True when the simulations are used to calculate
         scale factors.
 
         Implementation detail:
@@ -419,7 +424,7 @@ class Project(object):
         # Slow panda indexing workaround
         return residual_idx
 
-    def _update_prior_residuals(self, residual_idx):
+    def _update_parameter_prior_residuals(self, residual_idx):
         """"
         Updates self._simulations_df inplace with residuals with respect to parameter priors
         """
@@ -483,8 +488,10 @@ class Project(object):
         return extra_residual
 
     def _calc_model_jacobian(self, exp_subset='all', use_experimental_timepoints=True):
-        # Calculates the jacobian of the model variables with respect to model parameters, then maps it to the jacobian
-        # of the measured variable with respect to project parameters
+        """
+        Calculates the jacobian of the model variables with respect to model parameters, then maps it to the jacobian
+        of the measured variable with respect to project parameters
+        """
         if self._project_param_vector is None:
             raise ValueError('Parameter vector not set')
 
@@ -509,7 +516,12 @@ class Project(object):
             residual_idx += self._map_model_jac_to_measures(model_jacobian, t_sim, experiment, residual_idx,
                                                             use_experimental_timepoints)
 
-    def _update_prior_jacobian(self, residual_idx):
+    def _update_parameter_prior_jacobian(self, residual_idx):
+        """
+        Updates the jacobian wrt the parameter priors.  Since we are working in logspace, and the parameter
+        priors are logpriors, then the jacobian is trivially 1 for a parameter with respect to itself, and zero with
+        respect to everything else.
+        """
         # In practice - we don't have to update this, ever.  Can optimize it out?
         for p_group in self._parameter_priors:
             for settings in self._parameter_priors[p_group]:
@@ -571,8 +583,15 @@ class Project(object):
         return self._measurements_df.copy()
 
     @property
-    def model_jacobian_df(self):
-        return self._model_jacobian_df
+    def get_model_jacobian_df(self, include_priors=False):
+        if self._model_jacobian_df is None:
+            raise ValueError("No jacobian calculations executed yet")
+        else:
+            out = self._model_jacobian_df.copy()
+
+        if not include_priors:
+            out.drop(["~Prior", "~~SF_Prior"], level=0, axis=0, inplace=True)
+        return out
 
     @property
     def parameter_priors(self):
@@ -706,7 +725,7 @@ class Project(object):
         self.reset_calcs()
         self._project_param_vector = np.copy(project_param_vector)
         res_idx = self._sim_experiments()
-        self._update_prior_residuals(res_idx)
+        self._update_parameter_prior_residuals(res_idx)
 
         return self._loss_function.residuals(self._simulations_df, self._measurements_df)
 
@@ -747,7 +766,7 @@ class Project(object):
         self._project_param_vector = np.copy(project_param_vector)
 
         res_idx = self._sim_experiments()
-        self._update_prior_residuals(res_idx)
+        self._update_parameter_prior_residuals(res_idx)
         self._calc_model_jacobian()
 
         return self._loss_function.jacobian(self._simulations_df, self._measurements_df, self._model_jacobian_df)
