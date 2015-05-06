@@ -582,7 +582,6 @@ class Project(object):
     def measurements_df(self):
         return self._measurements_df.copy()
 
-    @property
     def get_model_jacobian_df(self, include_priors=False):
         if self._model_jacobian_df is None:
             raise ValueError("No jacobian calculations executed yet")

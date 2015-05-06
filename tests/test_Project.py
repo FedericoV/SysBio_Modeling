@@ -122,7 +122,7 @@ class TestProject(TestCase):
         project_param_vector = np.exp(log_project_param_vector)
         proj.calc_project_jacobian(log_project_param_vector)
 
-        model_jac = proj.model_jacobian_df
+        model_jac = proj.get_model_jacobian_df()
 
         for experiment in proj.experiments:
             k_synt_idx = experiment.param_global_vector_idx['k_synt']
@@ -425,3 +425,34 @@ class TestProject(TestCase):
         out = proj.calc_sum_square_residuals(nlopt_params)
         res = proj.residuals(nlopt_params)
         rss = 1 / 2.0 * np.sum(res ** 2)
+
+    def test_load_project(self):
+        """
+        Check that, for some fairly complex projects, when we load them, we still get the same values
+        """
+        import dill
+        import os
+        import sys
+
+        project_path = os.path.join(os.getcwd(), 'tests', 'test_utils', 'loading_test')
+        sys.path.insert(0, project_path)
+
+        #############################################################################################
+        projects = [
+            '4528.0150_lstq_RSS_Fri Mar 13 10:07:18 2015.pickle',  # L2Loss_Coop_Complex_Settings_Fit_everything
+            '10546.9520_lstq_RSS_Tue May  5 04:06:57 2015.pickle',  # LogLoss_Coop_Tetramer_Binding
+            '11258.3391_lstq_RSS_Thu Apr 30 12:01:55 2015.pickle']  # LogLoss_Non_Coop_Tetramer_Binding
+
+        for project_name in projects:
+            idx = project_name.find('_')
+            old_rss = float(project_name[:idx])
+
+            p_fh = open(os.path.join(project_path, project_name), 'rb')
+            project_dict = dill.load(p_fh)
+            # Ok - it loaded correctly.  Now check that we get the same answer.
+
+            proj = project_dict.pop('project')
+            proj.reset_calcs()
+            params = proj.project_param_dict_to_vect(project_dict)
+            new_rss = proj.calc_sum_square_residuals(params)
+            assert (np.allclose(old_rss, new_rss, rtol=0.001))
