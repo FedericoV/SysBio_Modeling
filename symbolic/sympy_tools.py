@@ -51,9 +51,22 @@ def _process_chunk(chunk, sympify_rhs=False):
 
 
 def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, jacobian_eqns=None,
-                     write_ordered_params=False, subexpressions=None):
+                     write_ordered_params=False, subexpressions=None, imports=None):
+
     lines = []
     pad = "    "
+
+    # Handle imports
+    default_imports = ["import numpy as np",
+                       "from numba import njit"]
+
+    for import_string in default_imports:
+        if import_string not in imports:
+            imports.append(import_string)
+
+    for import_string in imports:
+        lines.append(import_string)
+    lines.append("\n")
 
     if write_ordered_params:
         ordered_param_str = ", ".join(["'%s'" % par for par in params.keys()])
@@ -62,6 +75,7 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
         lines.append("\n")
 
     if sens_eqns is None:
+        lines.append("@njit")
         lines.append("def model(y, t, yout, p):")
     else:
         lines.append("def sens_model(y, t, yout, p):")
@@ -120,6 +134,7 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
             all_eqns += sens_eqns.values()
 
         lines.append('\n\n')
+        lines.append("@njit")
         lines.append("def model_jacobian(y, t, yout, p):")
         lines.append("")
 
@@ -171,11 +186,14 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
 
 
 def parse_model_file(model_fh):
-    model_text = model_fh.read()
+    if type(model_fh) == str:
+        model_text = model_fh
+    else:
+        model_text = model_fh.read()
 
     categories = {'Parameters': False, 'Variables': False,
                   'Conservation Laws': True, 'Rate Laws': True,
-                  'Differential Equations': True}
+                  'Differential Equations': True, 'Imports': False}
 
     parsed_model_dict = {}
 
@@ -184,7 +202,12 @@ def parse_model_file(model_fh):
         end_idx = model_text.find("#*! %s End" % category)
 
         chunk = model_text[start_idx:end_idx].split('\n')
-        symbols_dict = _process_chunk(chunk, sympify_rhs)
+
+        # Imports are just a raw string we copy and paste at the start of the file.
+        if category == 'Imports':
+            symbols_dict = chunk
+        else:
+            symbols_dict = _process_chunk(chunk, sympify_rhs)
 
         parsed_model_dict[category] = symbols_dict
 
@@ -207,13 +230,20 @@ def make_jit_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_s
             raise ValueError('No valid output path or sensitivity subdirectory')
 
     model_dict = parse_model_file(model_fh)
-    model_fh.close()
+
+    # If we had a StringIO-type object, close it.
+    try:
+        model_fh.close()
+    except AttributeError:
+        pass
+
 
     eqns = model_dict['Differential Equations']
     rate_laws = model_dict['Rate Laws']
     cons_laws = model_dict['Conservation Laws']
     variables = model_dict['Variables']
     params = model_dict['Parameters']
+    imports = model_dict['Imports']
 
     if fixed_params is not None:
         for f_p in fixed_params:
@@ -272,6 +302,6 @@ def make_jit_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_s
             write_ordered_params = True
 
     _write_jit_model(variables, expanded_eqns, params, sens_model_fh, sens_eqns, model_jac_eqns,
-                     write_ordered_params, subexpressions)
+                     write_ordered_params, subexpressions, imports)
 
     return model_dict
