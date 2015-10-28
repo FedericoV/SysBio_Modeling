@@ -1,4 +1,7 @@
 import os
+import types
+import dill
+from StringIO import StringIO
 from collections import OrderedDict
 from sympy import *
 
@@ -51,12 +54,13 @@ def _process_chunk(chunk, sympify_rhs=False):
 
 
 def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, jacobian_eqns=None,
-                     write_ordered_params=False, subexpressions=None, imports=None):
+                     subexpressions=None, imports=None):
+    """ Write out a model to a file-like object"""
 
     lines = []
-    pad = "    "
+    pad = ' ' * 4  # 4 spaces as padding.
 
-    # Handle imports
+    # Import numpy and numba by default.
     default_imports = ["import numpy as np",
                        "from numba import njit"]
 
@@ -68,11 +72,11 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
         lines.append(import_string)
     lines.append("\n")
 
-    if write_ordered_params:
-        ordered_param_str = ", ".join(["'%s'" % par for par in params.keys()])
-        lines.append("ordered_params = [ %s ]" % ordered_param_str)
-        lines.append("n_vars = %d" % len(variables))
-        lines.append("\n")
+    # Write out the parameters in the order they appear in the model
+    ordered_param_str = ", ".join(["'%s'" % par for par in params.keys()])
+    lines.append("ordered_params = [ %s ]" % ordered_param_str)
+    lines.append("n_vars = %d" % len(variables))
+    lines.append("\n")
 
     if sens_eqns is None:
         lines.append("@njit")
@@ -80,38 +84,61 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
     else:
         lines.append("def sens_model(y, t, yout, p):")
 
+    # ----------------------------------------------------------------------
+    # Write out the parameter block.
+    # Parameters are contained in p, a 1d numpy array.
+    # ----------------------------------------------------------------------
     lines.append("")
+    lines.append("#*! Parameters Start")
     lines.append(pad + "#---------------------------------------------------------#")
     lines.append(pad + "#Parameters#")
     lines.append(pad + "#---------------------------------------------------------#\n")
-    for idx, var in enumerate(params):
-        lines.append(pad + "%s = p[%d]" % (var, idx))
+    for idx, par in enumerate(params):
+        lines.append(pad + "%s = p[%d]" % (par, idx))
+    lines.append("#*! Parameters End")
 
+    # ----------------------------------------------------------------------
+    # Write out the state variables block.
+    # Variables are contained in y, a 1d numpy array.
+    # ----------------------------------------------------------------------
     lines.append("\n")
+    lines.append("#*! Variables Start")
     lines.append(pad + "#---------------------------------------------------------#")
     lines.append(pad + "#Variables#")
     lines.append(pad + "#---------------------------------------------------------#\n")
     for idx, var in enumerate(variables):
         lines.append(pad + "%s = y[%d]" % (var, idx))
 
+    # if the model contains sensitivity equations, we have an extra pxn state variables
     if sens_eqns is not None:
         lines.append("\n")
         lines.append(pad + "#---------------------------------------------------------#")
-        lines.append(pad + "#sensitivity Variables#")
+        lines.append(pad + "#Sensitivity Variables#")
         lines.append(pad + "#---------------------------------------------------------#\n")
         total_vars = len(variables)
         for idx, var in enumerate(sens_eqns.keys()):
             lines.append(pad + "%s = y[%d]" % (var, idx + total_vars))
+    lines.append("#*! Variables End")
 
+    # ----------------------------------------------------------------------
+    # Write out the subexpressions block.
+    # ----------------------------------------------------------------------
     if subexpressions is not None:
         lines.append("\n")
+        lines.append("#*! Subexpressions Start")
         lines.append(pad + "#---------------------------------------------------------#")
         lines.append(pad + "#Subexpressions#")
         lines.append(pad + "#---------------------------------------------------------#\n")
         for expr_var, expr in enumerate(subexpressions.items()):
             lines.append(pad + "%s = %s" % (expr[0], expr[1]))
+    lines.append("#*! Subexpressions End")
 
+    # ----------------------------------------------------------------------
+    # Write out the actual differential equations.
+    # We store their values in yout, a 1d numpy array
+    # ----------------------------------------------------------------------
     lines.append("\n")
+    lines.append("#*! Differential Equations Start")
     lines.append(pad + "#---------------------------------------------------------#")
     lines.append(pad + "#Differential Equations#")
     lines.append(pad + "#---------------------------------------------------------#\n")
@@ -127,6 +154,7 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
 
         for idx, eqn in enumerate(sens_eqns.values()):
             lines.append(pad + "yout[%d] = (%s)" % (idx + total_vars, eqn))
+    lines.append("#*! Differential Equations End")
 
     if jacobian_eqns is not None:
         all_eqns = diff_eqns.values()
@@ -175,32 +203,38 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
                 j += 1
                 lines.append("")
 
-    # Check for 'log' string.
-    model_str = " ".join(lines)
-    if "log" in model_str:
-        lines.insert(0, "from numpy import log \n")
-
     for line in lines:
         output_fh.write(line + "\n")
         # Actually write out the model
 
 
-def parse_model_file(model_fh):
-    if type(model_fh) == str:
-        model_text = model_fh
+def parse_model_file(model):
+    """
+
+    :param model: StringIO | str | types.FunctionType
+    :return:
+    :rtype: dict
+    """
+
+    if types.FunctionType == type(model):
+        model_text = dill.source.getsource(model)
     else:
-        model_text = model_fh.read()
+        if type(model) == str:
+            model = open(model, 'r').read()
+        model_text = model.read()
+        model.close()
 
     categories = {'Parameters': False, 'Variables': False,
                   'Conservation Laws': True, 'Rate Laws': True,
                   'Differential Equations': True, 'Imports': False}
 
-    parsed_model_dict = {}
+    parsed_model = {}
 
     for category, sympify_rhs in categories.items():
+
+        # Each chunk starts with those markers.
         start_idx = model_text.find("#*! %s Start" % category)
         end_idx = model_text.find("#*! %s End" % category)
-
         chunk = model_text[start_idx:end_idx].split('\n')
 
         # Imports are just a raw string we copy and paste at the start of the file.
@@ -209,34 +243,39 @@ def parse_model_file(model_fh):
         else:
             symbols_dict = _process_chunk(chunk, sympify_rhs)
 
-        parsed_model_dict[category] = symbols_dict
+        parsed_model[category] = symbols_dict
 
-    return parsed_model_dict
+    return parsed_model
 
 
-def make_jit_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_sensitivities=True,
-                   write_ordered_params=None, simplify_subexpressions=False, make_model_jacobian=False):
+def make_jacobian(model, output_file=None, simplify_subexpressions=False):
+    model_dict = parse_model_file(model)
 
-    if 'module' in str(type(model_fh)):
-        import inspect
-        model_fh = open(inspect.getsourcefile(model_fh))
+    eqns = model_dict['Differential Equations']
+    rate_laws = model_dict['Rate Laws']
+    cons_laws = model_dict['Conservation Laws']
+    variables = model_dict['Variables']
+    params = model_dict['Parameters']
+    imports = model_dict['Imports']
 
-    if sens_model_fh is None:
-        model_fn = os.path.realpath(model_fh.name)
-        sens_path = os.path.join(os.path.dirname(model_fn), 'sensitivity')
-        if os.path.exists(sens_path):
-            sens_model_fh = open(os.path.join(sens_path, 'sensitivity_%s' % os.path.basename(model_fn)), 'w')
-        else:
-            raise ValueError('No valid output path or sensitivity subdirectory')
+    model_jac_eqns = generate_model_jacobian(all_eqns)
+    model_dict['Model Jacobian Equations'] = model_jac_eqns
 
-    model_dict = parse_model_file(model_fh)
 
-    # If we had a StringIO-type object, close it.
-    try:
-        model_fh.close()
-    except AttributeError:
-        pass
+def make_jit_model(model, output_file=None, fixed_params=None, make_model_sensitivities=True,
+                   simplify_subexpressions=False, make_model_jacobian=False):
+    """
 
+    :param model: str | StringIO | func
+    :param output_file:
+    :param fixed_params:
+    :param make_model_sensitivities:
+    :param simplify_subexpressions:
+    :param make_model_jacobian:
+    :return:
+    """
+
+    model_dict = parse_model_file(model)
 
     eqns = model_dict['Differential Equations']
     rate_laws = model_dict['Rate Laws']
@@ -295,13 +334,7 @@ def make_jit_model(model_fh, sens_model_fh=None, fixed_params=None, make_model_s
 
     model_dict['Subexpressions'] = subexpressions
 
-    if write_ordered_params is None:
-        if make_model_sensitivities is True:
-            write_ordered_params = False
-        else:
-            write_ordered_params = True
-
-    _write_jit_model(variables, expanded_eqns, params, sens_model_fh, sens_eqns, model_jac_eqns,
-                     write_ordered_params, subexpressions, imports)
+    _write_jit_model(variables, expanded_eqns, params, output_file, sens_eqns, model_jac_eqns,
+                     subexpressions, imports)
 
     return model_dict
