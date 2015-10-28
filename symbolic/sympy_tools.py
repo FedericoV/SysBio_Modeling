@@ -1,39 +1,21 @@
-import os
 import types
 import dill
-from StringIO import StringIO
 from collections import OrderedDict
 from sympy import *
+import numpy as np
 
 
-def generate_sensitivity_equations(equations, params):
-    sens_eqns = OrderedDict()
-    for var_i, f_i in equations.items():
-        for par_j in params.keys():
-            if params[par_j] == 'fixed':
-                # We don't calculate sensitivity wrt fixed parameters
-                continue
-            dsens = diff(f_i, par_j)
-            for var_k in equations.keys():
-                sens_kj = Symbol('sens%s_%s' % (var_k, par_j))
-                dsens += diff(f_i, var_k) * sens_kj
+def wrap_model(yout_size, model):
+    yout = np.zeros(yout_size)
 
-            sens_eqns['sens%s_%s' % (var_i, par_j)] = simplify(dsens)
+    def wrapped_model(y, t, p):
+        model(y, t, yout, p)
+        return yout
 
-    return sens_eqns
+    return wrapped_model
 
 
-def generate_model_jacobian(equations):
-    jacobian_equations = OrderedDict()
-    for var_i, f_i in equations.items():
-        for var_j in equations.keys():
-            dfi_dj = Symbol('d%s_d%s' % (var_i, var_j))
-            jacobian_equations[dfi_dj] = diff(f_i, var_j)
-
-    return jacobian_equations
-
-
-def _process_chunk(chunk, sympify_rhs=False):
+def _sympify_chunk(chunk, sympify_rhs=False):
     symbols_dict = OrderedDict()
 
     for line in chunk:
@@ -53,36 +35,45 @@ def _process_chunk(chunk, sympify_rhs=False):
     return symbols_dict
 
 
-def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, jacobian_eqns=None,
-                     subexpressions=None, imports=None):
-    """ Write out a model to a file-like object"""
-
+def _write_header(model_dict, fcn_name):
     lines = []
     pad = ' ' * 4  # 4 spaces as padding.
 
+    subexpressions = model_dict['Subexpressions']
+    params = model_dict['Parameters']
+    imports = model_dict['Imports']
+    sens_eqns = model_dict['Sensitivity Equations']
+    variables = model_dict['Variables']
+
+    # ----------------------------------------------------------------------
+    # Write Imports
+    # ----------------------------------------------------------------------
     # Import numpy and numba by default.
     default_imports = ["import numpy as np",
                        "from numba import njit"]
 
-    for import_string in default_imports:
-        if import_string not in imports:
-            imports.append(import_string)
+    if imports is None:
+        imports = default_imports
+
+    else:
+        for import_string in default_imports:
+            if import_string not in imports:
+                imports.append(import_string)
 
     for import_string in imports:
         lines.append(import_string)
     lines.append("\n")
 
-    # Write out the parameters in the order they appear in the model
+    # ----------------------------------------------------------------------
+    # Write out the parameters, variable names, and function header
+    # ----------------------------------------------------------------------
     ordered_param_str = ", ".join(["'%s'" % par for par in params.keys()])
     lines.append("ordered_params = [ %s ]" % ordered_param_str)
     lines.append("n_vars = %d" % len(variables))
     lines.append("\n")
 
-    if sens_eqns is None:
-        lines.append("@njit")
-        lines.append("def model(y, t, yout, p):")
-    else:
-        lines.append("def sens_model(y, t, yout, p):")
+    lines.append("@njit")
+    lines.append("def %s(y, t, yout, p):" % fcn_name)
 
     # ----------------------------------------------------------------------
     # Write out the parameter block.
@@ -115,11 +106,10 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
         lines.append(pad + "#---------------------------------------------------------#")
         lines.append(pad + "#Sensitivity Variables#")
         lines.append(pad + "#---------------------------------------------------------#\n")
-        total_vars = len(variables)
+        n_state_vars = len(variables)
         for idx, var in enumerate(sens_eqns.keys()):
-            lines.append(pad + "%s = y[%d]" % (var, idx + total_vars))
+            lines.append(pad + "%s = y[%d]" % (var, idx + n_state_vars))
     lines.append("#*! Variables End")
-
     # ----------------------------------------------------------------------
     # Write out the subexpressions block.
     # ----------------------------------------------------------------------
@@ -131,7 +121,49 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
         lines.append(pad + "#---------------------------------------------------------#\n")
         for expr_var, expr in enumerate(subexpressions.items()):
             lines.append(pad + "%s = %s" % (expr[0], expr[1]))
-    lines.append("#*! Subexpressions End")
+        lines.append("#*! Subexpressions End")
+
+    return lines
+
+
+def _generate_sensitivity_equations(equations, params):
+    sens_eqns = OrderedDict()
+    for var_i, f_i in equations.items():
+        for par_j in params.keys():
+            if params[par_j] == 'fixed':
+                # We don't calculate sensitivity wrt fixed parameters
+                continue
+            dsens = diff(f_i, par_j)
+            for var_k in equations.keys():
+                sens_kj = Symbol('sens%s_%s' % (var_k, par_j))
+                dsens += diff(f_i, var_k) * sens_kj
+
+            sens_eqns['sens%s_%s' % (var_i, par_j)] = simplify(dsens)
+    return sens_eqns
+
+
+def _generate_jacobian_equations(equations):
+    jacobian_equations = OrderedDict()
+    for var_i, f_i in equations.items():
+        for var_j in equations.keys():
+            dfi_dj = Symbol('d%s_d%s' % (var_i, var_j))
+            jacobian_equations[dfi_dj] = diff(f_i, var_j)
+
+    return jacobian_equations
+
+
+def write_ode_model(model_dict, output_fh=None):
+    """ Write out a model to a file-like object"""
+
+    sens_eqns = model_dict['Sensitivity Equations']
+    diff_eqns = model_dict['Differential Equations']
+
+    n_total_vars = len(diff_eqns)
+    if sens_eqns:
+        n_total_vars += len(diff_eqns)
+
+    pad = ' ' * 4  # 4 spaces as padding.
+    lines = _write_header(model_dict, fcn_name='model')
 
     # ----------------------------------------------------------------------
     # Write out the actual differential equations.
@@ -146,66 +178,77 @@ def _write_jit_model(variables, diff_eqns, params, output_fh, sens_eqns=None, ja
     for idx, eqn in enumerate(diff_eqns.values()):
         lines.append(pad + "yout[%d] = (%s)" % (idx, eqn))
 
-    if sens_eqns is not None:
+    if sens_eqns:
         lines.append("\n")
         lines.append(pad + "#---------------------------------------------------------#")
         lines.append(pad + "#sensitivity Equations#")
         lines.append(pad + "#---------------------------------------------------------#\n")
 
         for idx, eqn in enumerate(sens_eqns.values()):
-            lines.append(pad + "yout[%d] = (%s)" % (idx + total_vars, eqn))
+            lines.append(pad + "yout[%d] = (%s)" % (idx + len(diff_eqns), eqn))
     lines.append("#*! Differential Equations End")
 
-    if jacobian_eqns is not None:
-        all_eqns = diff_eqns.values()
-        if sens_eqns is not None:
-            all_eqns += sens_eqns.values()
+    # Actually write out the model
+    if output_fh:
+        for line in lines:
+            output_fh.write(line + "\n")
 
-        lines.append('\n\n')
-        lines.append("@njit")
-        lines.append("def model_jacobian(y, t, yout, p):")
-        lines.append("")
+    # Return a function-like object
+    fcn_str = "\n".join(lines)
 
-        lines.append(pad + "#---------------------------------------------------------#")
-        lines.append(pad + "#Parameters#")
-        lines.append(pad + "#---------------------------------------------------------#\n")
-        for idx, var in enumerate(params):
-            lines.append(pad + "%s = p[%d]" % (var, idx))
+    # puts 'model' fcn in scope
+    exec fcn_str
 
-        lines.append("\n")
-        lines.append(pad + "#---------------------------------------------------------#")
-        lines.append(pad + "#Variables#")
-        lines.append(pad + "#---------------------------------------------------------#\n")
-        for idx, var in enumerate(variables):
-            lines.append(pad + "%s = y[%d]" % (var, idx))
+    # wrap model:
+    # noinspection PyUnresolvedReferences
+    wrapped_model = wrap_model((n_total_vars,), model)
 
-        lines.append("\n")
-        if sens_eqns is not None:
-            lines.append("\n")
-            lines.append(pad + "#---------------------------------------------------------#")
-            lines.append(pad + "#sensitivity Variables#")
-            lines.append(pad + "#---------------------------------------------------------#\n")
-            total_vars = len(variables)
-            for idx, var in enumerate(sens_eqns.keys()):
-                lines.append(pad + "%s = y[%d]" % (var, idx + total_vars))
+    return wrapped_model
 
-        lines.append("\n")
-        i = j = 0
-        for jac_var, eqn in jacobian_eqns.items():
-            eqn_str = "%s" % eqn
-            if eqn_str != "0":
-                lines.append(pad + "yout[%d,%d] = (%s) #  %s" % (i, j, eqn, jac_var))
-            else:
-                lines.append(pad + "# yout[%d,%d] = (%s) #  %s" % (i, j, eqn, jac_var))
-            i += 1
-            if i >= len(all_eqns):
-                i = 0
-                j += 1
-                lines.append("")
 
-    for line in lines:
-        output_fh.write(line + "\n")
-        # Actually write out the model
+def make_model_jacobian(model_dict, output_fh=None):
+    model_jac_eqns = model_dict['Model Jacobian Equations']
+    sens_eqns = model_dict['Sensitivity Equations']
+    diff_eqns = model_dict['Differential Equations']
+
+    n_total_variables = len(diff_eqns)
+    if sens_eqns:
+        n_total_variables += len(sens_eqns)
+
+    pad = ' ' * 4  # 4 spaces as padding.
+    # very important that the string 'model_jacobian' matches the returned
+    # variable at the bottom due to dynamic code injection via exec
+    lines = _write_header(model_dict, fcn_name='model_jacobian')
+
+    # ----------------------------------------------------------------------
+    # Write out the jacobian equations block.
+    # Outputs are stored in yout, a 2d numpy array.
+    # ----------------------------------------------------------------------
+    lines.append("\n")
+    i = j = 0
+    for jac_var, eqn in model_jac_eqns.items():
+        eqn_str = "%s" % eqn
+        if eqn_str != "0":
+            lines.append(pad + "yout[%d,%d] = (%s) #  %s" % (i, j, eqn, jac_var))
+        else:
+            lines.append(pad + "# yout[%d,%d] = (%s) #  %s" % (i, j, eqn, jac_var))
+        i += 1
+        if i >= n_total_variables:
+            i = 0
+            j += 1
+            lines.append("")
+
+    # Actually write out the model
+    if output_fh:
+        for line in lines:
+            output_fh.write(line + "\n")
+
+    # Return a function-like object
+    fcn_str = "\n".join(lines)
+    # puts 'model' fcn in scope
+    exec fcn_str
+    # noinspection PyUnresolvedReferences
+    return model_jacobian
 
 
 def parse_model_file(model):
@@ -229,9 +272,7 @@ def parse_model_file(model):
                   'Differential Equations': True, 'Imports': False}
 
     parsed_model = {}
-
     for category, sympify_rhs in categories.items():
-
         # Each chunk starts with those markers.
         start_idx = model_text.find("#*! %s Start" % category)
         end_idx = model_text.find("#*! %s End" % category)
@@ -241,29 +282,15 @@ def parse_model_file(model):
         if category == 'Imports':
             symbols_dict = chunk
         else:
-            symbols_dict = _process_chunk(chunk, sympify_rhs)
+            symbols_dict = _sympify_chunk(chunk, sympify_rhs)
 
         parsed_model[category] = symbols_dict
 
     return parsed_model
 
 
-def make_jacobian(model, output_file=None, simplify_subexpressions=False):
-    model_dict = parse_model_file(model)
-
-    eqns = model_dict['Differential Equations']
-    rate_laws = model_dict['Rate Laws']
-    cons_laws = model_dict['Conservation Laws']
-    variables = model_dict['Variables']
-    params = model_dict['Parameters']
-    imports = model_dict['Imports']
-
-    model_jac_eqns = generate_model_jacobian(all_eqns)
-    model_dict['Model Jacobian Equations'] = model_jac_eqns
-
-
-def make_jit_model(model, output_file=None, fixed_params=None, make_model_sensitivities=True,
-                   simplify_subexpressions=False, make_model_jacobian=False):
+def process_model_dict(model_dict, fixed_params=None, calculate_model_sensitivities=True,
+                       simplify_subexpressions=False, calculate_model_jacobian=False):
     """
 
     :param model: str | StringIO | func
@@ -275,14 +302,10 @@ def make_jit_model(model, output_file=None, fixed_params=None, make_model_sensit
     :return:
     """
 
-    model_dict = parse_model_file(model)
-
     eqns = model_dict['Differential Equations']
     rate_laws = model_dict['Rate Laws']
     cons_laws = model_dict['Conservation Laws']
-    variables = model_dict['Variables']
     params = model_dict['Parameters']
-    imports = model_dict['Imports']
 
     if fixed_params is not None:
         for f_p in fixed_params:
@@ -297,8 +320,8 @@ def make_jit_model(model, output_file=None, fixed_params=None, make_model_sensit
 
     # Sensitivity Equations
     sens_eqns = None
-    if make_model_sensitivities:
-        sens_eqns = generate_sensitivity_equations(expanded_eqns, params)
+    if calculate_model_sensitivities:
+        sens_eqns = _generate_sensitivity_equations(expanded_eqns, params)
     model_dict['Sensitivity Equations'] = sens_eqns
 
     all_eqns = OrderedDict()
@@ -311,8 +334,8 @@ def make_jit_model(model, output_file=None, fixed_params=None, make_model_sensit
 
     # Model Jacobian
     model_jac_eqns = None
-    if make_model_jacobian:
-        model_jac_eqns = generate_model_jacobian(all_eqns)
+    if calculate_model_jacobian:
+        model_jac_eqns = _generate_jacobian_equations(all_eqns)
     model_dict['Model Jacobian Equations'] = model_jac_eqns
 
     # Subexpressions
@@ -333,8 +356,4 @@ def make_jit_model(model, output_file=None, fixed_params=None, make_model_sensit
         model_dict['Sensitivity Equations'] = simplified_eqns[len(eqns):]
 
     model_dict['Subexpressions'] = subexpressions
-
-    _write_jit_model(variables, expanded_eqns, params, output_file, sens_eqns, model_jac_eqns,
-                     subexpressions, imports)
-
     return model_dict
