@@ -126,7 +126,7 @@ def _write_header(model_dict, fcn_name):
     return lines
 
 
-def _generate_sensitivity_equations(equations, params):
+def _derive_sensitivity_equations(equations, params):
     sens_eqns = OrderedDict()
     for var_i, f_i in equations.items():
         for par_j in params.keys():
@@ -135,24 +135,24 @@ def _generate_sensitivity_equations(equations, params):
                 continue
             dsens = diff(f_i, par_j)
             for var_k in equations.keys():
-                sens_kj = Symbol('sens%s_%s' % (var_k, par_j))
+                sens_kj = Symbol('sens_%s_%s' % (var_k, par_j))
                 dsens += diff(f_i, var_k) * sens_kj
 
-            sens_eqns['sens%s_%s' % (var_i, par_j)] = simplify(dsens)
+            sens_eqns['d_sens_%s_%s' % (var_i, par_j)] = simplify(dsens)
     return sens_eqns
 
 
-def _generate_jacobian_equations(equations):
+def _derive_jacobian_equations(equations):
     jacobian_equations = OrderedDict()
     for var_i, f_i in equations.items():
         for var_j in equations.keys():
-            dfi_dj = Symbol('d%s_d%s' % (var_i, var_j))
+            dfi_dj = Symbol('d_%s_d_%s' % (var_i, var_j))
             jacobian_equations[dfi_dj] = diff(f_i, var_j)
 
     return jacobian_equations
 
 
-def write_ode_model(model_dict, output_fh=None):
+def make_ode_model(model_dict, output_fh=None):
     """ Write out a model to a file-like object"""
 
     sens_eqns = model_dict['Sensitivity Equations']
@@ -206,14 +206,14 @@ def write_ode_model(model_dict, output_fh=None):
     return wrapped_model
 
 
-def make_model_jacobian(model_dict, output_fh=None):
+def make_ode_model_jacobian(model_dict, output_fh=None):
     model_jac_eqns = model_dict['Model Jacobian Equations']
     sens_eqns = model_dict['Sensitivity Equations']
     diff_eqns = model_dict['Differential Equations']
 
-    n_total_variables = len(diff_eqns)
+    n_total_vars = len(diff_eqns)
     if sens_eqns:
-        n_total_variables += len(sens_eqns)
+        n_total_vars += len(sens_eqns)
 
     pad = ' ' * 4  # 4 spaces as padding.
     # very important that the string 'model_jacobian' matches the returned
@@ -233,7 +233,7 @@ def make_model_jacobian(model_dict, output_fh=None):
         else:
             lines.append(pad + "# yout[%d,%d] = (%s) #  %s" % (i, j, eqn, jac_var))
         i += 1
-        if i >= n_total_variables:
+        if i >= n_total_vars:
             i = 0
             j += 1
             lines.append("")
@@ -245,10 +245,15 @@ def make_model_jacobian(model_dict, output_fh=None):
 
     # Return a function-like object
     fcn_str = "\n".join(lines)
-    # puts 'model' fcn in scope
+
+    # puts 'model_jacobian' fcn in scope
     exec fcn_str
+
+    # wrap model:
     # noinspection PyUnresolvedReferences
-    return model_jacobian
+    wrapped_model = wrap_model((n_total_vars, n_total_vars), model_jacobian)
+    # noinspection PyUnresolvedReferences
+    return wrapped_model
 
 
 def parse_model_file(model):
@@ -258,6 +263,8 @@ def parse_model_file(model):
     :return:
     :rtype: dict
     """
+    if 'numba.targets.registry.CPUOverloaded' in str(type(model)):
+        model = model.py_func
 
     if types.FunctionType == type(model):
         model_text = dill.source.getsource(model)
@@ -314,14 +321,16 @@ def process_model_dict(model_dict, fixed_params=None, calculate_model_sensitivit
             except KeyError:
                 raise KeyError('%s not in model parameters' % f_p)
 
+    # Expand out the differential equations and substitute in all conservation laws
+    # and auxiliary expressions.
     expanded_eqns = OrderedDict()
     for d_var, eqn in eqns.items():
-        expanded_eqns[d_var[1:]] = eqn.subs(rate_laws).subs(cons_laws).simplify()
+        expanded_eqns[d_var[2:]] = eqn.subs(rate_laws).subs(cons_laws).simplify()
 
-    # Sensitivity Equations
+    # Derive the sensitivity equations
     sens_eqns = None
     if calculate_model_sensitivities:
-        sens_eqns = _generate_sensitivity_equations(expanded_eqns, params)
+        sens_eqns = _derive_sensitivity_equations(expanded_eqns, params)
     model_dict['Sensitivity Equations'] = sens_eqns
 
     all_eqns = OrderedDict()
@@ -335,10 +344,13 @@ def process_model_dict(model_dict, fixed_params=None, calculate_model_sensitivit
     # Model Jacobian
     model_jac_eqns = None
     if calculate_model_jacobian:
-        model_jac_eqns = _generate_jacobian_equations(all_eqns)
+        model_jac_eqns = _derive_jacobian_equations(all_eqns)
     model_dict['Model Jacobian Equations'] = model_jac_eqns
 
-    # Subexpressions
+    # Simplifications:
+    # We use SymPy to find common subexpressions that occur multiple times in all the equations
+    # and pre-compute them.  Results in a non-trivial speed up but can make it harder to see
+    # original equations.
     subexpressions = None
     if simplify_subexpressions:
 
