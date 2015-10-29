@@ -24,8 +24,9 @@ class OdeModel(ModelABC):
         Whether or not to jit `sens_model` and `model` using numba
     """
 
-    def __init__(self, model, sens_model, n_vars, param_order, model_name="Model",
-                 use_jit='True', model_jac=None, sens_model_jac=None, jit_type='numba'):
+    def __init__(self, model, sens_model, n_vars, param_order,
+                 model_name='Model', use_jit=True, model_jac=None,
+                 sens_model_jac=None, jit_type='numba'):
         self._unjitted_model = model  # Keep unjitted version just in case
         self._unjitted_sens_model = sens_model
         self._unjitted_model_jac = model_jac
