@@ -1,12 +1,8 @@
-__author__ = 'federico'
-
 from unittest import TestCase
-
-import numpy as np
-
 from ..model import OdeModel
 from test_utils.jittable_model import model as jitted_model
 from test_utils.sens_jittable_model import sens_model as jitted_sens_model
+import numpy as np
 
 
 class TestOdeModel(TestCase):
@@ -49,8 +45,8 @@ class TestOdeModel(TestCase):
         assert np.allclose(k_synt_analytical_jac, k_synt_numerical_jac, rtol=0.05)
 
         # with respect to k_deg
-        k_deg_analytical_jac = k_synt * timepoints * np.exp(-k_deg * timepoints) / k_deg - k_synt / k_deg ** 2 + k_synt * np.exp(
-            -k_deg * timepoints) / k_deg ** 2
+        k_deg_analytical_jac = k_synt * timepoints * np.exp(-k_deg * timepoints) / (
+            k_deg - k_synt / k_deg ** 2 + k_synt * np.exp(-k_deg * timepoints) / k_deg ** 2)
         k_deg_numerical_jac = y_jac[:, 0]
 
         assert np.allclose(k_deg_analytical_jac, k_deg_numerical_jac, rtol=0.05)
