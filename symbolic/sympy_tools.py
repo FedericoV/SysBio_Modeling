@@ -110,6 +110,7 @@ def _write_header(model_dict, fcn_name):
         for idx, var in enumerate(sens_eqns.keys()):
             lines.append(pad + "%s = y[%d]" % (var, idx + n_state_vars))
     lines.append("#*! Variables End")
+
     # ----------------------------------------------------------------------
     # Write out the subexpressions block.
     # ----------------------------------------------------------------------
@@ -127,6 +128,9 @@ def _write_header(model_dict, fcn_name):
 
 
 def _derive_sensitivity_equations(equations, params):
+    """Calculates the sensitivity equations for all state variables with
+    respect to all parameters.
+    """
     sens_eqns = OrderedDict()
     for var_i, f_i in equations.items():
         for par_j in params.keys():
@@ -143,6 +147,9 @@ def _derive_sensitivity_equations(equations, params):
 
 
 def _derive_jacobian_equations(equations):
+    """Calculates the jacobian (dy_i/dy_j) for all differential equations
+    with respect to every state variable.
+    """
     jacobian_equations = OrderedDict()
     for var_i, f_i in equations.items():
         for var_j in equations.keys():
@@ -202,6 +209,9 @@ def make_ode_model(model_dict, output_fh=None):
     # wrap model:
     # noinspection PyUnresolvedReferences
     wrapped_model = wrap_model((n_total_vars,), model)
+    wrapped_model.n_vars = n_vars
+    wrapped_model.state_variables = model_dict['Variables'].keys()
+    wrapped_model.ordered_params = ordered_params
 
     return wrapped_model
 
@@ -252,20 +262,33 @@ def make_ode_model_jacobian(model_dict, output_fh=None):
     # wrap model:
     # noinspection PyUnresolvedReferences
     wrapped_model = wrap_model((n_total_vars, n_total_vars), model_jacobian)
-    # noinspection PyUnresolvedReferences
+    wrapped_model.n_vars = n_vars
+    wrapped_model.ordered_params = ordered_params
+    wrapped_model.state_variables = model_dict['Variables'].keys()
+
     return wrapped_model
 
 
 def parse_model_file(model):
     """
 
-    :param model: StringIO | str | types.FunctionType
-    :return:
-    :rtype: dict
+    :param model: StringIO | str | function : A file-like object, string, or
+    function that contains a set of differential equations.  See the examples
+    for the specific format of the model.
+
+    :return: A dict containing 'Parameters', 'Variables', 'Conservation Laws',
+    'Rate Laws', 'Differential Equations', 'Imports' parsed from the model.
+
+    :rtype: dict[str, expr]
     """
+
+    # If we passed a numba function, get the regular python function from
+    # numba
     if 'numba.targets.registry.CPUOverloaded' in str(type(model)):
         model = model.py_func
 
+    # If it's a regular function, get the text.  Use dill to get the function
+    # text as a string.
     if types.FunctionType == type(model):
         model_text = dill.source.getsource(model)
     else:
@@ -278,6 +301,8 @@ def parse_model_file(model):
                   'Conservation Laws': True, 'Rate Laws': True,
                   'Differential Equations': True, 'Imports': False}
 
+    # Do the actual parsing of the model itself.  We use #* to split off
+    # the different sections
     parsed_model = {}
     for category, sympify_rhs in categories.items():
         # Each chunk starts with those markers.
@@ -285,7 +310,8 @@ def parse_model_file(model):
         end_idx = model_text.find("#*! %s End" % category)
         chunk = model_text[start_idx:end_idx].split('\n')
 
-        # Imports are just a raw string we copy and paste at the start of the file.
+        # Imports are just a raw string we copy and paste again
+        # at the start of the file.
         if category == 'Imports':
             symbols_dict = chunk
         else:
@@ -300,12 +326,11 @@ def process_model_dict(model_dict, fixed_params=None, calculate_model_sensitivit
                        simplify_subexpressions=False, calculate_model_jacobian=False):
     """
 
-    :param model: str | StringIO | func
-    :param output_file:
+    :param model_dict:
     :param fixed_params:
-    :param make_model_sensitivities:
+    :param calculate_model_sensitivities:
     :param simplify_subexpressions:
-    :param make_model_jacobian:
+    :param calculate_model_jacobian:
     :return:
     """
 
@@ -359,13 +384,14 @@ def process_model_dict(model_dict, fixed_params=None, calculate_model_sensitivit
 
         for d_var, simp_eqn in zip(expanded_eqns, simplified_eqns[:len(eqns)]):
             expanded_eqns[d_var] = simp_eqn
+            model_dict['Differential Equations']['d_%s' %d_var] = simp_eqn
 
         if sens_eqns is not None:
             for d_var, simp_eqn in zip(sens_eqns, simplified_eqns[len(eqns):]):
                 sens_eqns[d_var] = simp_eqn
+                model_dict['Sensitivity Equations']['d_%s' %d_var] = simp_eqn
 
-        model_dict['Differential Equations'] = simplified_eqns[:len(eqns)]
-        model_dict['Sensitivity Equations'] = simplified_eqns[len(eqns):]
+        #model_dict['Differential Equations'] = simplified_eqns[:len(eqns)]
 
     model_dict['Subexpressions'] = subexpressions
     return model_dict
